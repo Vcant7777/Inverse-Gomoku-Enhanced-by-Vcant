@@ -147,10 +147,10 @@ const defaults = await page.evaluate(() => ({
   infoLimit: document.getElementById("info-limit").textContent,
   param: document.getElementById("info-param").textContent,
 }));
-check(defaults.tier === 2 && defaults.limit === 12 && defaults.mode === "none" &&
-  defaults.infoLimit === "不限时" &&
+check(defaults.tier === 2 && defaults.limit === 15 && defaults.mode === "ai" &&
+  defaults.infoLimit === "读 15 秒" &&
   defaults.param === "高级·VCF开 · 深度 8 层",
-  "default advanced+VCF / depth 8 / 不限时");
+  "default advanced+VCF / depth 8 / 读秒 15s");
 
 await page.keyboard.press("e");
 await page.click('input[name="limit"][value="ai"]');

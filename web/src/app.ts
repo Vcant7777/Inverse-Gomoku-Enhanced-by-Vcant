@@ -58,8 +58,8 @@ export class App {
   private nodes = 0;
 
   private tier = 2;
-  private limitMode: "none" | "ai" = "none";
-  private limitSeconds = 12;
+  private limitMode: "none" | "ai" = "ai";
+  private limitSeconds = 15;
   private hver: "beginner" | "mid" | "advanced" = "advanced";
   private hvcf = true;
 
