@@ -50,10 +50,12 @@ the player who first makes five in a row *loses*). It ships:
 
 ## Rules
 
-15×15 board, Black moves first. Each turn a player either **places** a stone on
-an empty cell, or **relocates**: capture an opponent stone, then place it on an
-empty cell along one of 8 directions (two steps, one turn). The player who first
-makes five in a row **loses**.
+Inverse Gomoku is played on a 15×15 board. The standard rules:
+
+1. Victory: whoever first makes five stones in a row loses.
+2. Placement: Black moves first; players alternate placing stones on empty intersections.
+3. Push (relocation): land on an opponent's stone, then move that stone along one of the eight directions for any number of cells, but it is blocked by other stones.
+4. Prohibitions: White may not push during the first two turns; suicide moves are forbidden; pushing with no valid path is forbidden.
 
 > **Naming note**: this project uses the Chinese name 「逆五子棋」 (*Inverse
 > Gomoku*) to distinguish it from *reverse gomoku*, which has no relocation
