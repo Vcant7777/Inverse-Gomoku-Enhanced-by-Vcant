@@ -361,3 +361,37 @@ def find_forced_kill(board, player: int, pending: int, turn_count: int,
         if ctx.aborted:
             return None
     return None
+
+
+def find_forced_kill_depth(board, player: int, pending: int, turn_count: int,
+                           white_turns: int, config,
+                           max_depth: int | None = None,
+                           deadline: float | None = None,
+                           node_cap: int | None = None,
+                           progress_cb=None) -> tuple[int, int] | None:
+    """同 find_forced_kill,但返回 (起始着法, 最小证明回合数 turns);未证明 None。
+
+    turns=0:当前已有一手可执行的杀(安置杀/两步杀占领步);
+    turns=d>=1:进攻方在第 d+1 个进攻回合完成杀(每回合进攻方连续两步)。
+    先按完整深度证明一次(未证直接返回,不做递增重试),已证后按 d=0.. 递增
+    细化最小回合数;细化因超时失败时按证明上限 depth 返回(回合数只多不少)。
+    供"必败时选最长抵抗"的根节点防守校验使用(见 heuristic._filter_defensive_kills)。"""
+    if deadline is not None and time.perf_counter() > deadline:
+        return None
+    if not USE_VCF or turn_count < config.loss_start_turns:
+        return None
+    depth = VCF_MAX_DEPTH if max_depth is None else max_depth
+    mv = find_forced_kill(board, player, pending, turn_count, white_turns,
+                          config, max_depth=depth, deadline=deadline,
+                          node_cap=node_cap, progress_cb=progress_cb)
+    if mv is None:
+        return None
+    for d in range(depth):
+        if deadline is not None and time.perf_counter() > deadline:
+            return int(mv), depth                  # 细化超时:按证明上限
+        mv2 = find_forced_kill(board, player, pending, turn_count, white_turns,
+                               config, max_depth=d, deadline=deadline,
+                               node_cap=node_cap, progress_cb=progress_cb)
+        if mv2 is not None:
+            return int(mv2), d
+    return int(mv), depth

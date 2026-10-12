@@ -1162,8 +1162,8 @@ def _search(board: np.ndarray, player: int, pending: int, turn_count: int,
                            player) >= 4 \
                 and _loses_to_kill(b2, player, wt2, tc2, config):
             # 本回合己方新增子:普通落子在 (r,c),占领+安置在占领格(pending)。
-            # 走完留己方可杀 4 连(含五带缺):对方必杀(攻彼忘我!)
-            v = -(WIN - ply)
+            # 走完留己方可杀 4 连(含五带缺):对方下回合两步必杀(攻彼忘我!)
+            v = -(WIN - (ply + 2))
         else:
             d2 = depth - 1
             # 保送槽传递:安置步后我方最新子=占领格;普通落子=刚下的 m
@@ -1243,11 +1243,70 @@ def _defensive_vcf_slice(time_budget: float | None) -> float:
     return min(0.3, max(0.02, 0.025 * time_budget))
 
 
+def _loss_value(turns: int) -> float:
+    """VCF 已证对手强制杀时的必败分(保守下界):对手还需 turns 个进攻回合
+    (每回合两步),损失发生在对手第 turns+1 个回合,折算 plies 下界
+    2*turns + 3(turns=0 即"对手下回合两步杀",与搜索中 -(WIN-3) 同尺度)。
+    只用于排序,故取保守下界、不夸大存活步数;关键是不再把已证必败压成
+    "一步即败" -(WIN-1) 从而反转"必败选最长抵抗"的排序(见 _search 的
+    WIN - ply 将死值语义)。"""
+    return -(WIN - (2 * turns + 3))
+
+
+def _proven_loss_value(board, opp, tc, wt, config, deadline, node_cap):
+    """行棋方为 opp 的局面:可证其强制杀时返回对应必败分,未证/超时 None。"""
+    got = threat_search.find_forced_kill_depth(
+        board, opp, -1, tc, wt, config,
+        max_depth=threat_search.VCF_MAX_DEPTH,
+        deadline=deadline, node_cap=node_cap)
+    if got is None:
+        return None
+    return _loss_value(int(got[1]))
+
+
+def _occupy_turn_loss(b2, p2, pend2, tc2, wt2, config, opp,
+                      deadline, node_cap):
+    """占领步后同方继续安置:校验整回合(占领+安置)是否仍必败。
+
+    枚举全部合法安置;任一安置走完后对手无强制杀 = 该回合安全,
+    返回 (False, None);全部安置均必败时返回 (True, 最长存活必败分)。
+    占领步是逆五移子的前半步,旧实现直接跳过不校验,导致本局"占 H5"
+    与"占 H6"两条防守分支只能靠有限深度评估区分、选错较长抵抗。"""
+    pmask = ReverseGomoku.legal_mask_for(b2, p2, pend2, wt2, config, tc2)
+    best = None
+    for pi in np.nonzero(pmask)[0]:
+        b3, _, _, tc3, wt3, loser3 = ReverseGomoku.apply_step(
+            b2, int(pi), p2, pend2, tc2, wt2, config)
+        if loser3 == opp:
+            return False, None             # 安置直接反杀:本回合安全
+        if loser3 != 0:
+            continue                       # 自杀安置(掩码外,保守跳过)
+        if opp == WHITE and wt3 < config.white_restrict_turns:
+            return False, None             # 对手(白)禁移期不可能有杀
+        if time.perf_counter() > deadline:
+            return False, None             # 未完成证明:保守视为安全
+        if threat_search.has_kill(b3, opp, -1, tc3, wt3, config):
+            val = _loss_value(0)
+        else:
+            val = _proven_loss_value(b3, opp, tc3, wt3, config,
+                                     deadline, node_cap)
+            if val is None:
+                return False, None         # 未证/超时:安全
+        if best is None or val > best:
+            best = val
+    if best is None:
+        return False, None                 # 无合法安置(不应出现)
+    return True, best
+
+
 def _filter_defensive_kills(ranked, board, player, pending, turn_count,
                             white_turns, config, total_budget: float,
                             top_n: int = 3):
     """把"走完轮到对手、对手可证明强制杀"的根着法降为必败分。
 
+    降分带距离(见 _loss_value):不再用 -(WIN-1),保证 VCF 已证必败不会
+    排在搜索已证更短的杀之后;占领步按"占领+全部安置"整回合校验,全部
+    安置必败才降(任一安置未被证明必败则该候选视为安全、不降)。
     VCF 结论保守(找不到 ≠ 安全),只用于避免确定性送杀;已有我方确定杀着
     (|v| ≥ MATE_LIMIT)不再检查。total_budget 为本次校验的总预算(秒),
     平分给前 top_n 个候选。"""
@@ -1259,25 +1318,30 @@ def _filter_defensive_kills(ranked, board, player, pending, turn_count,
     if opp == WHITE and white_turns < config.white_restrict_turns:
         return ranked                       # 对手(白)禁移期不可能有杀
     share = total_budget / max(top_n, 1)
+    node_cap = max(2000, threat_search.VCF_NODE_CAP // 4)
     changed = False
     for i in range(min(top_n, len(ranked))):
         m, v = ranked[i]
         if abs(v) >= MATE_LIMIT:
             continue
+        deadline = time.perf_counter() + share
         b2, p2, pend2, tc2, wt2, loser = ReverseGomoku.apply_step(
             board, m, player, pending, turn_count, white_turns, config)
-        if loser != 0 or pend2 >= 0:
-            continue                        # 自杀/反杀/占领后仍是我方行棋
+        if loser != 0:
+            continue                        # 自杀/反杀
+        if pend2 >= 0:
+            # 占领步:校验"占领+安置"整回合(安置枚举,任一安全即不降)
+            all_lose, val = _occupy_turn_loss(b2, p2, pend2, tc2, wt2,
+                                              config, opp, deadline, node_cap)
+            if all_lose:
+                ranked[i] = (m, val)        # 所有安置均遭强制杀:确定性送杀
+                changed = True
+            continue
         if tc2 < config.loss_start_turns:
             continue
-        deadline = time.perf_counter() + share
-        mv = threat_search.find_forced_kill(
-            b2, opp, -1, tc2, wt2, config,
-            max_depth=threat_search.VCF_MAX_DEPTH,
-            deadline=deadline,
-            node_cap=max(2000, threat_search.VCF_NODE_CAP // 4))
-        if mv is not None:
-            ranked[i] = (m, -(WIN - 1))     # 对手有强制杀:确定性送杀
+        val = _proven_loss_value(b2, opp, tc2, wt2, config, deadline, node_cap)
+        if val is not None:
+            ranked[i] = (m, val)            # 对手有强制杀:确定性送杀
             changed = True
     if changed:
         ranked = sorted(ranked, key=lambda t: -t[1])
@@ -1351,7 +1415,7 @@ def _root_iterative(board, player, pending, turn_count, white_turns, config,
                                pending % BOARD_SIZE if pending >= 0 else c,
                                player) >= 4 \
                     and _loses_to_kill(b2, player, wt2, tc2, config):
-                v = -(WIN - 1)             # 第 1 步即送杀
+                v = -(WIN - 3)             # 走完留可杀四:对手下回合两步杀
             else:
                 v = -_search(b2, p2, pend2, tc2, wt2, config, d - 1,
                              -1e18, 1e18, ctx, ext_budget=1, ply=2,

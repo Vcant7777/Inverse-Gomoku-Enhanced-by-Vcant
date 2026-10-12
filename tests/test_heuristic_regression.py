@@ -287,3 +287,109 @@ def test_step30_blunder_not_chosen():
     vals = dict(moves)
     assert moves[0][0] != e0
     assert vals.get(e0, -1e18) < moves[0][1]
+
+
+# ------------------------------------------------- 最长抵抗/防守链回归
+def _step65_position() -> ReverseGomoku:
+    """对局-20261012-2322:第 66 步(黑)前夜局面,白有 H7->E7 立即杀。"""
+    from antifive.record import coord_to_idx
+    prefix = ("O0 O4 O4 J9 L0 L0 G5 O0 H7 O0 I6 O0 J5 O0 K4 L0 H4 L0 L3 L0 "
+              "I3 L0 L2 O0 M2 O0 O1 O4 L4 O4 K8 O0 M0 O1 M3 O1 K1 L2 J2 M0 "
+              "K2 M0 L1 M0 O2 M0 M1 M0 N0 O1 N2 O2 J7 O0 N1 L0 K0 K8 I8 L2 "
+              "H6 G5 H5 H6 F6")
+    g = ReverseGomoku(CFG)
+    for tok in prefix.split():
+        g.make_move(coord_to_idx(tok))
+    return g
+
+
+def test_loss_value_never_worse_than_immediate_loss():
+    """距离感知必败分:不得再用 -(WIN-1)(会把最长抵抗压成一步即败)。
+
+    -(WIN-1) 数值上劣于搜索的 mate-in-2/3(turns=0 对应 -(WIN-3)),旧实现
+    用它降分会把唯一挡杀点排到"送两步杀"的着法之后。"""
+    import antifive.heuristic as h
+    vals = [h._loss_value(t) for t in range(9)]
+    assert vals == sorted(vals)                     # 回合越多,分越高
+    assert all(v > -(h.WIN - 1) for v in vals)
+    assert h._loss_value(0) == -(h.WIN - 3)         # 与搜索"两步杀"同尺度
+
+
+def test_longest_defense_endgame_20261012():
+    """被绝杀时须选最长抵抗,不再被防守 VCF 降分骗成送杀。
+
+    65 手后白有立即杀 H7->E7(路线 F7/G7);穷举整回合防守只有:
+    H5+F7(白仍有 VCF 强制胜,约 2 回合)与 H6+G7(白无强制胜,最长)。
+    修复前第 67 步把唯一挡杀点 F7 降成 -(WIN-1),反被 mate-in-3 的
+    不挡着法超过,白 68-69 立即杀;修复后应选 H6(66)/G7(67)。"""
+    from antifive.record import coord_to_idx
+    g = _step65_position()
+    assert g.current_player == B and g.turn_count == 34
+    rng = np.random.default_rng(1)
+    mv66 = choose_heuristic_move(g.board, B, -1, g.turn_count, g.white_turns,
+                                 CFG, rng, depth=6, time_budget=15)
+    assert mv66 == coord_to_idx("H6")
+    b2, p2, pend2, tc2, wt2, _ = ReverseGomoku.apply_step(
+        g.board, mv66, B, -1, g.turn_count, g.white_turns, CFG)
+    mv67 = choose_heuristic_move(b2, p2, pend2, tc2, wt2, CFG, rng,
+                                 depth=6, time_budget=15)
+    assert mv67 == coord_to_idx("G7")
+
+
+def test_defensive_filter_backs_off_on_occupy_branch(monkeypatch):
+    """占领步防守校验:全部安置遭强制杀才降分;有安全安置则不降。
+
+    H5 占领分支下,真实搜索中白 VCF 可证杀(F7 必败,但比送两步杀慢),
+    降为距离感知必败分 -(WIN-5);若证明失败(模拟未证)则保持原值。"""
+    import antifive.heuristic as h
+    from antifive import threat_search as ts
+    from antifive.record import coord_to_idx
+    g = _step65_position()
+    h5 = coord_to_idx("H5")
+    h6 = coord_to_idx("H6")
+
+    calls = {"n": 0}
+
+    def fake_none(*a, **k):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr(ts, "find_forced_kill_depth", fake_none)
+    out = h._filter_defensive_kills([(h5, 1.0)], g.board, B, -1,
+                                    g.turn_count, g.white_turns, CFG, 0.5)
+    assert out[0][1] == 1.0 and calls["n"] > 0     # 未证:F7 安置安全,不降
+
+    def fake_turns(*a, **k):
+        return h6, 1
+
+    monkeypatch.setattr(ts, "find_forced_kill_depth", fake_turns)
+    out2 = h._filter_defensive_kills([(h5, 1.0)], g.board, B, -1,
+                                     g.turn_count, g.white_turns, CFG, 0.5)
+    assert out2[0][1] == h._loss_value(1)          # 已证:降为距离感知必败分
+    assert h._loss_value(1) > h._loss_value(0)
+
+
+def test_defensive_filter_keeps_mate_distance_order(monkeypatch):
+    """降分不得把非 mate 候选压到搜索已证更短的 mate 值之下。
+
+    旧 bug:-(WIN-1) 使 VCF 已证必败的着法排在 mate-in-3 之后,最长抵抗
+    排序被反转;距离感知降分后应仍居首。"""
+    import antifive.heuristic as h
+    from antifive import threat_search as ts
+
+    board = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.int8)
+    board[7, 7] = W
+    board[0, 0] = B
+    board[14, 14] = W
+    pending = 7 * BOARD_SIZE + 7
+    legal = np.nonzero(ReverseGomoku.legal_mask_for(
+        board, B, pending, 5, CFG, 20))[0]
+    assert legal.size >= 2
+    safe = (int(legal[0]), 1.0)                     # 未证安全的非 mate 候选
+    mate = (int(legal[1]), -(h.WIN - 3))            # 搜索已证 mate-in-3
+    monkeypatch.setattr(ts, "find_forced_kill_depth",
+                        lambda *a, **k: (int(legal[0]), 1))
+    out = h._filter_defensive_kills([safe, mate], board, B, pending, 20, 5,
+                                    CFG, 0.5)
+    assert out[0][0] == safe[0]
+    assert out[0][1] == h._loss_value(1) > mate[1]

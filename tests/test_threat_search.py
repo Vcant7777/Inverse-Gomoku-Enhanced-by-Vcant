@@ -244,6 +244,34 @@ def test_find_forced_kill_budget_fallback():
                                node_cap=1) is None
 
 
+def test_find_forced_kill_depth_reports_turns():
+    """深度助手:返回最小证明回合数;直接杀(安置杀/两步杀占领步)为 0。"""
+    board = _board(DOUBLE_FIXTURE)
+    got = ts.find_forced_kill_depth(board, B, -1, 20, 5, CFG, max_depth=6)
+    assert got is not None
+    move, turns = got
+    assert move == ts.find_forced_kill(board, B, -1, 20, 5, CFG, max_depth=6)
+    assert turns >= 1                    # 双杀需一个威胁回合,非直接杀
+
+    direct = _board({(5, 1): W, (5, 2): W, (5, 3): W, (5, 4): W,
+                     (8, 8): W, (0, 0): B, (0, 2): B, (1, 1): B})
+    got0 = ts.find_forced_kill_depth(direct, B, -1, 20, 5, CFG, max_depth=6)
+    assert got0 is not None and got0[1] == 0
+    assert got0[0] == 8 * BOARD_SIZE + 8
+
+
+def test_find_forced_kill_depth_budget_fallback():
+    """深度助手超时/节点上限只允许回退(None),不误报更小回合数。"""
+    board = _board(DOUBLE_FIXTURE)
+    got = ts.find_forced_kill_depth(board, B, -1, 20, 5, CFG, max_depth=6)
+    assert got is not None
+    late = ts.find_forced_kill_depth(board, B, -1, 20, 5, CFG, max_depth=6,
+                                     deadline=time.perf_counter() - 1.0)
+    assert late is None                  # 起始即超时:未知
+    assert ts.find_forced_kill_depth(board, B, -1, 20, 5, CFG, max_depth=6,
+                                     node_cap=1) is None
+
+
 def test_defensive_vcf_demotes_proven_loss(monkeypatch):
     """根候选走完若对手可证明强制杀,该着法降为必败分(防守校验单元)。"""
     from antifive import heuristic as h
