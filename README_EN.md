@@ -53,9 +53,7 @@ the player who first makes five in a row *loses*). It ships:
 15×15 board, Black moves first. Each turn a player either **places** a stone on
 an empty cell, or **relocates**: capture an opponent stone, then place it on an
 empty cell along one of 8 directions (two steps, one turn). The player who first
-makes five in a row **loses**. The balancing rule — White may not relocate
-during the first 2 turns — was proposed by
-[hzyhhzy](https://github.com/hzyhhzy), the author of KataGo/KataGomo.
+makes five in a row **loses**.
 
 > **Naming note**: this project uses the Chinese name 「逆五子棋」 (*Inverse
 > Gomoku*) to distinguish it from *reverse gomoku*, which has no relocation
@@ -124,7 +122,13 @@ Inverse Gomoku was invented by **日出333** (Bilibili):
 - Rules intro video: [BV1n84y1G7jT](https://www.bilibili.com/video/BV1n84y1G7jT)
 - GUI showcase video: [BV1i1eB6REcr](https://www.bilibili.com/video/BV1i1eB6REcr)
 
-This project is an open-source AI battle and training implementation of the game.
+The balancing rule — White may not relocate during the first 2 turns — was
+proposed by [hzyhhzy](https://github.com/hzyhhzy) with a rule-specialized
+KataGo build.
+
+- KataGo repo: [hzyhhzy/KataGomo](https://github.com/hzyhhzy/KataGomo)
+
+This project is an AI battle and GUI implementation of the game.
 
 ## Project Status (read first)
 
@@ -135,7 +139,8 @@ This project is an open-source AI battle and training implementation of the game
   `models/best_model.pth`) are kept for reproduction and as a negative result;
   see [`docs/training-log.md`](docs/training-log.md) (Chinese).
 - KataGo weights (`models/katago/*.bin`) are inverse-gomoku weights self-trained
-  on top of [hzyhhzy/KataGomo](https://github.com/hzyhhzy/KataGomo).
+  on top of [hzyhhzy](https://github.com/hzyhhzy)'s
+  [KataGomo](https://github.com/hzyhhzy/KataGomo).
   `katago.exe` and CUDA/cuDNN runtime libraries are **not redistributed**
   (license and size); see [`docs/engines.md`](docs/engines.md) (Chinese).
 - Developed on Windows / Python 3.13 / torch 2.9.1+cu130 / pygame 2.6.1 /
@@ -245,25 +250,45 @@ records the result as `[Result 黑认输/白认输]`.
 | Heuristic AI | numpy | Medium-high | depth 1–8, default 8 + 12s AI clock; three versions: Beginner (classic) / Mid (enhanced) / Advanced (+distillation, default) |
 | KataGo (inverse gomoku) | external exe + `.bin` | High | recommended |
 
-The heuristic AI loads tuned parameters from `data/params.json` (whitelisted
-eval/ordering keys, `ANTIFIVE_NO_PARAMS=1` to disable) and TT size is
-configurable via `ANTIFIVE_TT_BITS`. It enables a proof-based VCF
-(forced-kill-chain) search by default: `ANTIFIVE_VCF_BUDGET` default 0.05s,
-widened to 5% of the move budget (capped at 0.6s) when a clock is used,
-`ANTIFIVE_VCF=0` to disable, `ANTIFIVE_VCF_DEPTH` default 8. It also uses a
-KataGo-generated opening book for the first move (`openbook.py` +
-`openbook_data.py`, D4-symmetry lookup, `ANTIFIVE_NO_BOOK=1` to disable) and a
-bounded root "defensive VCF" check (top-3 candidates, <=0.3s reserved from the
-search budget). It also ships a **KataGo-distilled value correction** (D2): a
-tiny linear model over 20 symmetric features predicts KataGo winrate and is
-blended into `evaluate` at weight 0.5 (pure numpy, web-compatible;
-`ANTIFIVE_VALUE_W` to scale, `ANTIFIVE_NO_DISTILL=1` to disable). A candidate
-policy prior (D1) is trained too but off by default (`ANTIFIVE_PRIOR_W=0`;
-set positive to enable). Training pipeline:
-`python -m antifive.tools.build_distill_data` then
-`python -m antifive.tools.train_distill` (writes `distill_data.py`).
-See [`models/README.md`](models/README.md) and
-[`docs/engines.md`](docs/engines.md) (Chinese).
+The heuristic AI needs no extra files (numpy) and comes in three tiers.
+Approximate relative Elo from equal-time matches (96 games each; baseline
+Beginner = 1000, relative rather than absolute strength) and key traits:
+
+| Version | Rel. Elo | Key traits |
+|---|---|---|
+| Beginner | 1000 | classic alpha-beta + global evaluation (no VCF / book / distillation) |
+| Mid | ≈1340 | search-consistency fixes + proof-based VCF kill-chain + KataGo opening book + root defensive VCF |
+| Advanced (default) | ≈1650 | Mid + KataGo-distilled value correction (tiny linear model predicts winrate, blended at 0.5) |
+
+Head-to-head: Advanced beats Beginner 98%, Advanced beats Mid 82%, Mid beats
+Beginner 88%.
+
+Defaults and common switches:
+
+- Desktop: "Advanced + VCF on", depth 8, 12s AI clock per move (flags
+  `--heuristic-version/--heuristic-depth/--ai-time/--no-vcf`);
+- Web: also "Advanced + VCF on"; difficulties = depths 2/4/8, default 15s AI
+  clock, "no clock" runs a full-depth search (180s/move browser cap);
+- Parameters: `ANTIFIVE_TT_BITS` (transposition-table size, default 21; set
+  19-20 in memory-tight environments such as the web), `ANTIFIVE_VCF=0` /
+  `ANTIFIVE_VCF_DEPTH` (kill-chain toggle/depth, default 8; base budget
+  `ANTIFIVE_VCF_BUDGET` 0.05s, widened to 5% of the move budget and capped at
+  0.6s), `ANTIFIVE_NO_BOOK=1` (disable the opening book), `ANTIFIVE_VALUE_W`
+  (distilled value weight, default 0.5), `ANTIFIVE_PRIOR_W` (policy prior,
+  default 0 = off), `ANTIFIVE_NO_DISTILL=1` (disable distillation),
+  `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters in
+  `data/params.json`). Distillation training pipeline (build_distill_data →
+  train_distill) and engine/weight details: see
+  [`models/README.md`](models/README.md) and
+  [`docs/engines.md`](docs/engines.md) (Chinese).
+
+Search benchmarks and equal-time matches:
+
+```bash
+python -m antifive.tools.heur_bench --depths 4,5,6            # fixed position-pool benchmark
+python -m antifive.tools.match_ai --games 24 --depth 8 --budget 1 --workers 8  # old vs new heuristic
+python -m antifive.tools.match_katago --games 96 --workers 2  # Advanced vs KataGo (paired openings, resumable)
+```
 
 ## Record Format
 

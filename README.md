@@ -15,11 +15,12 @@ weights. All code is MIT-licensed and heavily AI-generated.
 >
 > **请注意**:本项目代码与文本主体由 AI 生成,经过人工初步核查但仍需要仔细甄别内容正误。
 >
-> > **AI Usage Statement:**
-> >
-> > **Please note** that the code and text content of this project are generated
-> > by AI, preliminarily reviewed by humans, but still require careful
-> > verification of accuracy.
+>> **AI Usage Statement:**
+>>
+>> **Please note** that the code and text content of this project are generated
+>> by AI, preliminarily reviewed by humans, but still require careful
+>> verification of accuracy.
+>>
 
 ---
 
@@ -48,8 +49,7 @@ weights. All code is MIT-licensed and heavily AI-generated.
 
 **逆五子棋**在 15×15 棋盘上进行,黑先。每回合二选一:**落子**(空位放子)或
 **移子**(占领对方一子,再沿直线把它安置到空位——占两个步但只算一个回合);
-连成五子的一方判负。白棋前 2 回合禁止移子的平衡规则由
-[hzyhhzy](https://github.com/hzyhhzy)(KataGo/KataGomo 的作者)提出。
+连成五子的一方判负。
 
 > **名称说明**:本项目采用「逆五子棋」这一名称,以区别于**没有移子规则**的
 > 反五子棋;两者胜负条件相同(连五者判负),但逆五子棋包含占领与安置的移子
@@ -116,7 +116,12 @@ npm run smoke    # 构建后浏览器冒烟测试(需本机 Chrome/Edge)
 - 规则介绍视频:[BV1n84y1G7jT](https://www.bilibili.com/video/BV1n84y1G7jT)
 - GUI 展示视频:[BV1i1eB6REcr](https://www.bilibili.com/video/BV1i1eB6REcr)
 
-本项目是该玩法的开源 AI 对战与训练实现。
+白棋前 2 回合禁止移子的平衡规则由
+[hzyhhzy](https://github.com/hzyhhzy)依靠特化规则的katago提出。
+
+- katago仓库:[hzyhhzy/KataGomo](https://github.com/hzyhhzy/KataGomo)
+
+本项目是该玩法的 AI 对战与GUI实现。
 
 ## 项目状态(重要,先读)
 
@@ -124,8 +129,8 @@ npm run smoke    # 构建后浏览器冒烟测试(需本机 Chrome/Edge)
   `training/`)**训练总体失败**:受自对弈数据规模与训练预算限制,最终强度不足,
   最多维持稍弱于启发式引擎的水平,不具备实用棋力。仓库保留其代码与权重
   (`models/warm_model.pth`、`models/best_model.pth`)仅为复现与负结果记录,
-  详见 [`docs/training-log.md`](docs/training-log.md)。负结果也是结果。
-- KataGo 权重(`models/katago/*.bin`)为本项目基于
+  详见 [`docs/training-log.md`](docs/training-log.md)。
+- KataGo 权重(`models/katago/*.bin`)为本项目基于[hzyhhzy](https://github.com/hzyhhzy)的
   [KataGomo](https://github.com/hzyhhzy/KataGomo) 自训练的逆五规则权重;
   `katago.exe` 与 CUDA/cuDNN 运行库因许可与体积原因**不随仓库分发**,
   使用方式见 [`docs/engines.md`](docs/engines.md)。
@@ -227,22 +232,22 @@ C++ `rules_probe`(由 KataGomo 构建,设置 `ANTIFIVE_RULES_PROBE` 后启用,�
 
 ## 界面与快捷键
 
-| 快捷键 | 功能 |
-|---|---|
-| R | 新局 |
-| U | 悔棋 |
-| D | 危险提示开关 |
-| N | 棋子手数显示开关 |
-| A | 移子箭头指示开关 |
-| H | 辅助射线开关 |
-| C | 落子确认开关(默认开:同一位置点两次才落子) |
-| M | 音效开关 |
-| S | 保存棋谱 |
-| L | 读取棋谱 |
-| E | 设定面板 |
-| 1–4 | 人执黑 / 人执白 / 人人对战 / 机机观战 |
-| ← → | 复盘时逐手回退 / 前进 |
-| Esc | 退出 |
+| 快捷键 | 功能                                      |
+| ------ | ----------------------------------------- |
+| R      | 新局                                      |
+| U      | 悔棋                                      |
+| D      | 危险提示开关                              |
+| N      | 棋子手数显示开关                          |
+| A      | 移子箭头指示开关                          |
+| H      | 辅助射线开关                              |
+| C      | 落子确认开关(默认开:同一位置点两次才落子) |
+| M      | 音效开关                                  |
+| S      | 保存棋谱                                  |
+| L      | 读取棋谱                                  |
+| E      | 设定面板                                  |
+| 1–4   | 人执黑 / 人执白 / 人人对战 / 机机观战     |
+| ← →  | 复盘时逐手回退 / 前进                     |
+| Esc    | 退出                                      |
 
 鼠标左键:空位落子;点对方棋子发起占领;安置阶段点绿色高亮格放下手中棋子。
 默认开启「落子确认」(棋盘下方按钮或 C 键开关):同一位置第一次点击只固定
@@ -254,33 +259,40 @@ AI 不参与认输逻辑)可让人类体面结束对局,结果以 `[Result 黑�
 
 ## AI 引擎与权重
 
-| 引擎 | 依赖 | 强度 | 说明 |
-|---|---|---|---|
-| 随机先验 MCTS | numpy | 低 | 无额外文件的默认兜底 |
-| 自研网络 MCTS | torch + `.pth` | 不足(训练失败) | 研究/复现用途 |
-| 启发式 AI | numpy | 中高 | 深度 1–8,默认 8 + AI 读秒 12s;三档版本:初级(经典)/ 中级(强化)/ 高级(+蒸馏,默认) |
-| KataGo(逆五) | 外部 exe + `.bin` | 高 | 推荐实用引擎 |
+| 引擎          | 依赖               | 强度           | 说明                                                                             |
+| ------------- | ------------------ | -------------- | -------------------------------------------------------------------------------- |
+| 随机先验 MCTS | numpy              | 低             | 无额外文件的默认兜底                                                             |
+| 自研网络 MCTS | torch +`.pth`    | 不足(训练失败) | 研究/复现用途                                                                    |
+| 启发式 AI     | numpy              | 中高           | 深度 1–8,默认 8 + AI 读秒 12s;三档版本:初级(经典)/ 中级(强化)/ 高级(+蒸馏,默认) |
+| KataGo(逆五)  | 外部 exe +`.bin` | 高             | 推荐实用引擎                                                                     |
 
 权重明细、加载方式与 KataGo 配置见 [`models/README.md`](models/README.md)
 与 [`docs/engines.md`](docs/engines.md)。
 
-启发式 AI 启动时会自动加载 `data/params.json` 中的调优参数(仅白名单评估/排序键;
-`ANTIFIVE_NO_PARAMS=1` 可关闭),置换表大小可用 `ANTIFIVE_TT_BITS` 调整(网页版等
-低内存环境可设 19-20)。对弈与分析默认启用独立强制杀链搜索(VCF 类,证明式必胜):
-基础预算 `ANTIFIVE_VCF_BUDGET` 默认 0.05s,有对局限时时按剩余预算的 5% 放宽
-(上限 0.6s,见 `heuristic._vcf_slice`),`ANTIFIVE_VCF=0` 关闭,
-`ANTIFIVE_VCF_DEPTH` 默认 8;桌面与网页的「设定」面板均可切换引擎版本
-(**初级**=经典冻结版 / **中级**=修复+开局库 / **高级**=中级+蒸馏,默认)与
-VCF 开关,默认**高级 + VCF 开**。另有:开局首手走 KataGo 离线开局库
-(`openbook.py` + `openbook_data.py`,D4 对称规范化,包内纯数据、网页可用,
-`ANTIFIVE_NO_BOOK=1` 关闭);根节点对前 3 候选做一次"防守 VCF"校验(从搜索
-预算中预留 ≤0.3s,证明对手强制杀则降为必败分)。另含 **KataGo 蒸馏价值校正**
-(D2):20 维"我方/对方对称"特征的小线性模型预测 KataGo 胜率,按权重 0.5
-混入 `evaluate`(纯 numpy,网页可用;`ANTIFIVE_VALUE_W` 调权重、
-`ANTIFIVE_NO_DISTILL=1` 关闭);策略先验(D1,标量+局部模式特征)已训练但
-默认关闭(`ANTIFIVE_PRIOR_W=0`,设为正数可开启)。训练管线:
-`python -m antifive.tools.build_distill_data`(20k visits 标注,可并行续跑)
-→ `python -m antifive.tools.train_distill`(写出包内 `distill_data.py`)。
+启发式 AI 无需额外文件(numpy),分三档;等时对拍(各 96 局)换算的近似相对
+Elo(以初级为 1000 基准,相对值而非绝对棋力)与各自最重要的特点:
+
+| 版本          | 相对 Elo | 最重要特点                                                                                   |
+| ------------- | -------- | -------------------------------------------------------------------------------------------- |
+| 初级          | 1000     | 经典 alpha-beta + 全局评估,无 VCF/开局库/蒸馏                                                |
+| 中级          | ≈1340    | 搜索一致性修复 + VCF 强制杀链(证明式必胜)+ KataGo 离线开局库 + 根节点防守 VCF              |
+| 高级(默认)   | ≈1650    | 中级 + KataGo 蒸馏价值校正(小线性模型预测胜率,按 0.5 混入评估)                              |
+
+对拍:高级对初级 98%、高级对中级 82%、中级对初级 88%。
+
+默认参数与常用开关:
+
+- 桌面:「高级 + VCF 开」、深度 8、AI 每步读秒 12s;命令行
+  `--heuristic-version/--heuristic-depth/--ai-time/--no-vcf` 可改;
+- 网页:同样默认「高级 + VCF 开」,三档难度 = 深度 2/4/8,默认 AI 读秒 15s,
+  「不限时」按深度完整搜索(浏览器 180s/步兜底);
+- 参数:`ANTIFIVE_TT_BITS` 置换表位宽(默认 21,网页等低内存环境可设 19-20)、
+  `ANTIFIVE_VCF=0`/`ANTIFIVE_VCF_DEPTH`(杀链开关/深度,默认 8;基础预算
+  `ANTIFIVE_VCF_BUDGET` 0.05s,限时按剩余预算 5% 放宽、上限 0.6s)、
+  `ANTIFIVE_NO_BOOK=1`(关开局库)、`ANTIFIVE_VALUE_W`(蒸馏价值权重,默认 0.5)、
+  `ANTIFIVE_PRIOR_W`(策略先验,默认 0=关)、`ANTIFIVE_NO_DISTILL=1`(关蒸馏)、
+  `ANTIFIVE_NO_PARAMS=1`(不加载 `data/params.json` 调优参数,默认启动自动加载)。
+  蒸馏训练管线见 [`docs/engines.md`](docs/engines.md)。
 搜索基准与新旧对拍:
 
 ```bash
