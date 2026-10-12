@@ -4,7 +4,8 @@
 (交替先后手),每层 --games 局;若 KataGo 对某一层全败(0 胜),则判定当前
 模型棋力不足,不开启下一层(更强对手)测试,提前结束。
 
-规则:white_restrict=2(与引擎一致),自杀着双方都允许(heuristic 不会主动走自杀)。
+规则:white_restrict=2(与引擎一致)。启发式侧按 mask_suicide=True 过滤自杀着
+(其不主动走自杀),KataGo 着法按引擎规则允许自杀。
 
 用法:
     python -m antifive.tools.katago_vs_heur --model models/katago/antifive15-init.bin \
@@ -31,15 +32,17 @@ from ..reversegomoku import (
 
 
 def _engine_defaults() -> tuple:
-    """从 config/engines.json 读取 KataGo 可执行文件与配置路径。"""
-    try:
-        with open(config_dir() / "engines.json", encoding="utf-8") as f:
-            for e in json.load(f):
-                if e.get("kind") == "heuristic":
-                    continue
-                return resolve(e.get("engine_path", "")), resolve(e.get("config_path", ""))
-    except Exception:
-        pass
+    """读取 KataGo 可执行文件与配置路径:engines.local.json(本机覆盖)优先。"""
+    for name in ("engines.local.json", "engines.json"):
+        try:
+            with open(config_dir() / name, encoding="utf-8") as f:
+                for e in json.load(f):
+                    if e.get("kind") == "heuristic":
+                        continue
+                    return (resolve(e.get("engine_path", "")),
+                            resolve(e.get("config_path", "")))
+        except Exception:
+            continue
     return "", ""
 
 
@@ -122,7 +125,7 @@ def _heur_move(depth, h_budget):
 
 def play_game(engine, model, cfg, sims, opp_move, rng, seed, white_restrict):
     """KataGo 与 opp_move(棋盘状态 → 着法 idx 的函数)对弈一局。"""
-    g = ReverseGomoku(GameConfig(loss_start_turns=8, white_restrict_turns=white_restrict, mask_suicide=False))
+    g = ReverseGomoku(GameConfig(loss_start_turns=8, white_restrict_turns=white_restrict))
     kg = KatagoGTP(engine, model, cfg, sims)
     kg_is_black = (seed % 2 == 0)
     try:
@@ -135,6 +138,7 @@ def play_game(engine, model, cfg, sims, opp_move, rng, seed, white_restrict):
                     g.loser = g.current_player
                     break
                 a = gtp_to_idx(coord)
+                g.make_move(a, allow_suicide=True)   # 引擎着法按引擎规则(允许自杀)
             else:
                 a = opp_move(g.board, g.current_player, g.pending,
                              g.turn_count, g.white_turns, g.config, rng)
@@ -143,9 +147,11 @@ def play_game(engine, model, cfg, sims, opp_move, rng, seed, white_restrict):
                     g.loser = g.current_player
                     break
                 kg.play(color, idx_to_gtp(a))
-            g.make_move(a)
+                g.make_move(a)
     finally:
         kg.close()
+    if not g.game_over:
+        g.is_draw = True               # 超步数封顶按和棋计(修复:原会误记黑胜)
     if g.is_draw:
         return "draw"
     return "W" if g.loser == BLACK else "B"

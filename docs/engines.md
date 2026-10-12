@@ -127,5 +127,33 @@ KataGo 的训练程序与依赖也不在开源范围内(本仓库只含运行配
 ### 自训练与对拍
 
 - 训练/自对弈实验使用 KataGomo 的 `selfplay` 与 GTP 工具,不属于本仓库;
-- 对拍脚本:`python -m antifive.tools.katago_vs_heur --model models/katago/antifive15-init.bin
-  --engine katago/katago.exe --engine-cfg config/gtp_test.cfg`。
+- 分级检验(随机→d2→d4→d8 阶梯):
+  `python -m antifive.tools.katago_vs_heur --model models/katago/antifive15-init.bin
+  --engine katago/katago.exe --engine-cfg config/gtp_test.cfg`;
+- 等时正式对拍(配对开局、黑白互换、断点续跑、落谱自检):
+  `python -m antifive.tools.match_katago --games 96 --katago-time 12
+  --heur-budget 12 --workers 2`;
+  输出 `records/katago_vs_advanced_<时间戳>/`(.afg 棋谱 + 逐局 JSON +
+  Wilson 置信区间的 summary.json);中断后对同一 `--out` 重跑即续跑。
+  注意:该工具对启发式使用 `mask_suicide=True`(GUI 同款);不能改为
+  `False`——否则启发式的候选生成会走出"占领即成己方五连"的自杀着。
+
+### 高级启发式 vs KataGo(12s 等时,96 局)
+
+2026-10-11~12,RTX 5070 Laptop;KataGo v1.12.3(CUDA 编译)+ 权重
+`antifive15-20260821-083223.bin`;高级启发式 = VCF + 开局库 + 蒸馏价值校正 +
+`data/params.json`,深度 8;双方每步 12 秒墙钟,48 个配对开局黑白互换,
+数据在 `records/stage2_12s/`(不入库):
+
+| 指标 | 结果 |
+|---|---|
+| 局分 | **启发式 0 : 96 KataGo**(KataGo 执黑 48:0、执白 48:0) |
+| 比分 95% CI | 0%(0% ~ 3.9%);近似 Elo 差 ≤ −559 |
+| 终局形态 | 96/96 由 KataGo 的"占领+安置"移子送连五给启发式落败;无认输/和棋 |
+| 局长 | 中位 40 步(21~189) |
+| 步时 | 启发式仅 21% 的步吃满 12s(迭代加深提前搜完);KataGo 全部 12s |
+| 访问量 | KataGo 约 600~2400 visits/s(2 局并发,GPU 共享) |
+
+**结论**:当前自训练权重的最强 KataGo 在 12s 等时下对"最强启发式"取得
+96:0,强度差距大于约 560 Elo;该差距主要来自战术强制力(移子送礼连五),
+而非启发式自损着(全程 0 次自我致命着)。

@@ -286,6 +286,7 @@ VCF 开关,默认**高级 + VCF 开**。另有:开局首手走 KataGo 离线开�
 ```bash
 python -m antifive.tools.heur_bench --depths 4,5,6            # 固定局面池基准
 python -m antifive.tools.match_ai --games 24 --depth 8 --budget 1 --workers 8  # 新旧等时对拍
+python -m antifive.tools.match_katago --games 96 --workers 2  # 高级启发式 vs KataGo 等时对拍(配对开局/断点续跑)
 ```
 
 ## 棋谱格式
