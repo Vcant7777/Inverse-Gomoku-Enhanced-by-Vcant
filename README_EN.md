@@ -73,16 +73,17 @@ Play in the browser, no installation:
   Web Worker; the front end is a static TypeScript + Canvas site hosted on
   GitHub Pages.
 - The first visit downloads the runtime (about 10-20 MB); later visits are served
-  from a Service Worker cache. Three difficulty tiers map to heuristic depths
-  2 / 4 / 8 (iterative deepening; on timeout the last completed depth is used).
+  from a Service Worker cache. Four difficulty tiers map to heuristic depths
+  2 / 4 / 8 / 8, defaulting to "Hard" (depth 8). The fourth tier "Hell" (above
+  Hard) forces the defense-hardened engine (depth 8 + clock-driven deepening).
   The default limit mode is "AI clock" at 15 seconds per move (customizable);
   "no clock" performs a full-depth search, with a 180s/move safety cap in the
   browser (the desktop build has no cap).
 - The settings dialog offers an **engine version** switch (Beginner classic /
-  Mid enhanced / Advanced + distillation) and a **VCF forced-kill-chain** toggle
-  (Mid/Advanced only); the default is Advanced + VCF on (strongest). Equal-time
-  round-robin: Advanced beats Mid 82%, Mid beats Beginner 88%, Advanced beats
-  Beginner 98% (96 games each).
+  Mid enhanced / Advanced + distillation / Hell defense-hardened) and a
+  **VCF forced-kill-chain** toggle (Mid/Advanced/Hell); the default is
+  Advanced + VCF on. Equal-time round-robin: Advanced beats Mid 82%, Mid beats
+  Beginner 88%, Advanced beats Beginner 98% (96 games each; Hell's Elo below).
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay
@@ -249,21 +250,28 @@ records the result as `[Result 黑认输/白认输]`.
 |---|---|---|---|
 | Uniform-prior MCTS | numpy | Low | default fallback |
 | Self-trained net MCTS | torch + `.pth` | Insufficient (training failed) | research only |
-| Heuristic AI | numpy | Medium-high | depth 1–8, default 8 + 12s AI clock; three versions: Beginner (classic) / Mid (enhanced) / Advanced (+distillation, default) |
+| Heuristic AI | numpy | Medium-high | depth 1–8 (Hell deepens within the clock), default 8 + 12s AI clock; four versions: Beginner / Mid / Advanced / Hell |
 | KataGo (inverse gomoku) | external exe + `.bin` | High | recommended |
 
-The heuristic AI needs no extra files (numpy) and comes in three tiers.
-Approximate relative Elo from equal-time matches (96 games each; baseline
-Beginner = 1000, relative rather than absolute strength) and key traits:
+The heuristic AI needs no extra files (numpy) and comes in four tiers.
 
-| Version | Rel. Elo | Key traits |
-|---|---|---|
-| Beginner | 1000 | classic alpha-beta + global evaluation (no VCF / book / distillation) |
-| Mid | ≈1340 | search-consistency fixes + proof-based VCF kill-chain + KataGo opening book + root defensive VCF |
-| Advanced (default) | ≈1650 | Mid + KataGo-distilled value correction (tiny linear model predicts winrate, blended at 0.5) |
+| Version | Key traits |
+|---|---|
+| Beginner | classic alpha-beta + global evaluation (no VCF / book / distillation) |
+| Mid | search-consistency fixes + proof-based VCF kill-chain + KataGo opening book + root defensive VCF |
+| Advanced (default) | Mid + KataGo-distilled value correction (tiny linear model predicts winrate, blended at 0.5) |
+| Hell | Advanced + deeper VCF (d12 / 240k nodes / ≤1.8 s) + strict-clock budget accounting with adaptive defensive reserve + clock-driven deepening; prophylactic candidates (P1) and latent-threat evaluation (P2) are kept behind switches and off by default (they lost equal-time A/B) |
 
-Head-to-head: Advanced beats Beginner 98%, Advanced beats Mid 82%, Mid beats
-Beginner 88%.
+Historical 1 s/move equal-time Elo (96 games each; Beginner = 1000 anchor):
+Mid ≈ 1340, Advanced ≈ 1650 (Advanced beat Beginner 98%, Advanced beat Mid 82%,
+Mid beat Beginner 88%). At that budget the lower tiers were time-starved; at the
+actual GUI/web budget (12–15 s) the tiers converge. Strict-clock 12 s × 96-game
+results (seed 0; Hell no longer overruns its own clock): Hell beats Advanced
+63:33 (65.6%, Elo +112), Mid 67:29 (69.8%, +145), Beginner 76:20 (79.2%, +232)
+— Hell is the strongest tier by every direct pairing. Relative Elo anchored at
+Beginner = 1000 via direct matches: Mid ≈ 1154, Advanced ≈ 1022, Hell ≈ 1232
+(per-pairing CI ≈ ±70 Elo; the frozen tiers show style inconsistencies at 12 s).
+Full table and commands: `docs/engines.md`.
 
 Defaults and common switches:
 
@@ -278,9 +286,13 @@ Defaults and common switches:
   0.6s), `ANTIFIVE_NO_BOOK=1` (disable the opening book), `ANTIFIVE_VALUE_W`
   (distilled value weight, default 0.5), `ANTIFIVE_PRIOR_W` (policy prior,
   default 0 = off), `ANTIFIVE_NO_DISTILL=1` (disable distillation),
-  `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters in
-  `data/params.json`). Distillation training pipeline (build_distill_data →
-  train_distill) and engine/weight details: see
+  `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters; Hell shares
+  `data/params.json` by default and prefers `data/params_hell.json` if present,
+  keeping the frozen tiers untouched), Hell switches
+  `ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1` (P1/P2, off by default),
+  `ANTIFIVE_NO_DYNAMIC=1`, `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME` (deep VCF,
+  default d12 / 240k nodes / ≤1.8 s). Distillation training pipeline
+  (build_distill_data → train_distill) and engine/weight details: see
   [`models/README.md`](models/README.md) and
   [`docs/engines.md`](docs/engines.md) (Chinese).
 

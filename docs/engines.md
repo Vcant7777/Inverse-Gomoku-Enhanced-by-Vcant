@@ -22,18 +22,78 @@ python -m antifive.gui --model models/best_model.pth
 
 ## 启发式 AI
 
-内置算法,无需额外文件;GUI 中可选深度 1–8(默认 8 + AI 读秒 12 秒,三档通用),
-并可切换三档引擎版本与 VCF 强制杀链开关(初级无 VCF;默认高级 + VCF 开):
+内置算法,无需额外文件;GUI 中可选深度 1–8(默认 8 + AI 读秒 12 秒,四档通用;
+地狱档在时限内动态加深,不受 8 层硬上限),并可切换四档引擎版本与 VCF 强制
+杀链开关(初级无 VCF;默认高级 + VCF 开):
 
-| 版本 | 实现 | 组成 | 等时对拍(96 局) |
-|---|---|---|---|
-| 初级 | `tools/heuristic_v2.py` 冻结经典版 | 老算法,无 VCF/开局库/蒸馏 | 对中级 12:84(12%) |
-| 中级 | `tools/heuristic_v5.py` 冻结快照 | 搜索一致性修复 + VCF v5.1 + 开局库 + 防守 VCF | 对初级 84:12(88%);对高级 17:79(18%) |
-| 高级(默认) | `antifive.heuristic` | 中级 + KataGo 蒸馏价值校正 | 对中级 79:17(82%);对初级 94:2(98%) |
+| 版本 | 实现 | 组成 |
+|---|---|---|
+| 初级 | `tools/heuristic_v2.py` 冻结经典版 | 老算法,无 VCF/开局库/蒸馏 |
+| 中级 | `tools/heuristic_v5.py` 冻结快照 | 搜索一致性修复 + VCF v5.1 + 开局库 + 防守 VCF |
+| 高级(默认) | `tools/heuristic_v6.py` 冻结快照 | 中级 + KataGo 蒸馏价值校正(旧 `antifive.heuristic` 行为) |
+| 地狱 | `antifive.heuristic` | 高级 + 防守强化:深化 VCF(d12/24 万节点/≤1.8s)、P1 预防性防守候选、P0 防守校验全候选与预算对等 + 时限动态加深、P2 潜伏威胁评估 |
+
+网页端难度第 4 档「地狱」= 深度 8 + 强制地狱引擎(困难之上);网页/桌面默认
+仍为困难/高级,不默认地狱。地狱档默认与高级共用 `data/params.json`;若存在
+`data/params_hell.json` 则优先读取(参数隔离机制保留,默认不提供该文件)。
+A/B 开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
+`ANTIFIVE_NO_DYNAMIC=1`、`ANTIFIVE_NO_LMR=1`、`ANTIFIVE_NO_ROOT_PVS=1`
+(实验特性)、VCF 参数 `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME`。
 
 命令行行为 `--engine heuristic --heuristic-depth N --limit none|ai --ai-time S
---heuristic-version beginner|mid|advanced --no-vcf`(兼容旧值 old/new)。
+--heuristic-version beginner|mid|advanced|hell --no-vcf`(兼容旧值 old/new)。
 参数可被 `data/params.json` 复现,调优工具见 `src/antifive/tools/param_tune.py`。
+
+### 四档等时对拍(12s/步 × 96 局/对,seed 0,严格时限)
+
+早期 1s 口径下低档被时钟饿死(高级对初级 98% 等);12s 口径下人人能完成
+深度 8,档间差距大幅收敛。2026-10-13 实测(`match_ai` 直接对拍,96 局/对;
+地狱档已修复"进攻 VCF 不计入本步预算"的超时问题,与对手同为严格 12s):
+
+| 配对(新 vs 旧) | 比分 | 近似 Elo 差(95% CI) |
+|---|---|---|
+| 地狱 vs 高级 | 63 : 33(65.6%) | +112(+41 ~ +184) |
+| 地狱 vs 中级 | 67 : 29(69.8%) | +145(+72 ~ +219) |
+| 地狱 vs 初级 | 76 : 20(79.2%) | +232(+149 ~ +314) |
+| 高级 vs 中级 | 48 : 48(50.0%) | 0(−68 ~ +68) |
+| 高级 vs 初级 | 51 : 45(53.1%) | +22(−46 ~ +89) |
+| 中级 vs 初级 | 68 : 28(70.8%) | +154(+78 ~ +225) |
+
+以初级为 1000 的相对 Elo(12s 口径,直接对初级换算):中级 ≈1154、
+高级 ≈1022、地狱 ≈1232;旧三档在 12s 下差距收敛且存在风格不一致
+(高级对中级 50%,中级对初级 70.8%),单对 CI 约 ±70 Elo。**地狱在三个
+直接配对中均显著领先(对高级 +112)**,是四档中的最强者。
+
+> 复盘注:地狱档此前的"57.3% vs 高级"含预算超时(进攻 VCF 的时间未计入
+> 本步预算,平均多出数秒/步);修复后须在严格时限内取胜,当前成绩为
+> 修复后重新实测。
+
+### 防守强化机制(地狱档相对高级)
+
+- **深化 VCF**:强制杀链从 d8/6 万节点/0.6s 提升到 d12/24 万节点/≤1.8s,
+  攻防两侧共用同一预算(`_vcf_slice`);无对局限时改用确定性节点上限
+  (`VCF_NODE_CAP_UNLIMITED`),保证 choose 与 analysis 结果一致;这是
+  对高级 +112 Elo 的主要来源;
+- **预算对等与严格计时**(P0):根防守校验覆盖全部候选、节点上限与进攻
+  一致、共享同一 deadline;本步总墙钟从 choose 入口计时,"进攻 VCF + 主
+  搜索 + 防守校验"合计 ≤ 时限(修复此前平均数秒/步的超时);
+- **自适应防守预留**:仅当己方已有危险四连(对方下一步可完成)或对方已有
+  可杀四时预留大额防守 VCF 预算,常规中盘只留 0.1s,回收时钟给搜索;
+- **时限动态加深**:`MAX_DYNAMIC_DEPTH=16`,预算用满前逐层加深;
+- **P1 预防性防守候选**(`ANTIFIVE_PREGIFT=1` 启用):枚举对方一步"投送
+  己方子成四/五"的枢纽(连续形 + 跳形缺口,jump_through 判定),对确成杀的
+  投送收集射线封堵格,按覆盖数排序补入根候选。严格等时对拍显示其净负
+  (根候选变多、搜索变浅),默认关闭;
+- **P2 潜伏威胁评估**(`ANTIFIVE_GIFT3=1` 启用):`E_SELF_GIFT3` 惩罚己方
+  三连"可被投送"负债;严格等时对拍净负,默认关闭;
+- **P3 复核**:多回合"以攻代守"在杀对已成立时不成立(不封堵则进攻方下一
+  回合立即完成杀),仅有"立刻反杀"是逃生(原 has_kill 检查已覆盖),故不做
+  不成立的放宽,并补回归测试锁定该语义;
+- **已否决的实验**:根 α 传播 + PVS 与 LMR 速度收益大(有效深度 +1~3 层),
+  但当前搜索树依赖搜索历史(`_include_extras` 会把 TT/killer 着法补进搜索
+  集合),零窗试搜与全窗搜索走不同的树,边界失效(实测把最优着法从 0.871
+  低估到 0.412,对拍 25%~38%),默认关闭(`USE_ROOT_PVS=False`、`USE_LMR=False`),
+  代码与开关保留待确定性改造后再启用。
 
 开局库:`antifive/openbook_data.py` 由 `tools/openbook_gen.py` 用 KataGo 生成
 (默认 20k visits;黑空盘首手 + 每个 D4 等价类首手的白方应手),运行时按 D4
@@ -61,14 +121,19 @@ python -m antifive.tools.train_distill --pool checkpoints/distill_pool.npz
 两个时限),策略先验单独启用 96 局 47:49(49%,故默认关闭)。
 
 对拍(等时强弱回归;冻结快照:`heuristic_v2`=初级、`heuristic_v5`=中级、
-`heuristic_v4`=搜索一致性修复前的旧快照):
+`heuristic_v6`=高级、`antifive.heuristic`=地狱、`heuristic_v4`=搜索一致性
+修复前的旧快照):
 
 ```bash
-# 三档两两对照(高级 vs 中级)
-python -m antifive.tools.match_ai --games 48 --depth 8 --budget 1 --workers 8 \
-    --new-module antifive.heuristic --old-module antifive.tools.heuristic_v5
+# 地狱 vs 高级(防守强化回归)
+python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
+    --new-module antifive.heuristic --old-module antifive.tools.heuristic_v6
+# 高级 vs 中级
+python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
+    --new-module antifive.tools.heuristic_v6 \
+    --old-module antifive.tools.heuristic_v5
 # 中级 vs 初级
-python -m antifive.tools.match_ai --games 48 --depth 8 --budget 1 --workers 8 \
+python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
     --new-module antifive.tools.heuristic_v5 \
     --old-module antifive.tools.heuristic_v2
 ```
