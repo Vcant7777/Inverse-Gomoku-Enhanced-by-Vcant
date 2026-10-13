@@ -589,7 +589,7 @@ def main():
                    help="启发式每步限时(秒)")
     p.add_argument("--heur-depth", type=int, default=8)
     p.add_argument("--heur-version", default="advanced",
-                   help="启发式版本(advanced/mid/beginner)")
+                   help="启发式版本(advanced/mid/beginner/hell)")
     p.add_argument("--no-vcf", action="store_true", help="关闭启发式 VCF")
     p.add_argument("--max-steps", type=int, default=450)
     p.add_argument("--white-restrict", type=int, default=2)

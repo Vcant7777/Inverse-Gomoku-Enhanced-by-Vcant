@@ -272,6 +272,85 @@ def test_find_forced_kill_depth_budget_fallback():
                                      node_cap=1) is None
 
 
+def test_defender_survives_by_own_kill_when_double_killed():
+    """进攻方双杀(封堵交集为空)时,防守方的"立刻反杀"(一步杀)仍算逃生;
+    多回合以攻代守在语义上不成立(不封堵则进攻方下一回合立即杀)。"""
+    stones = {
+        # B(进攻方)对 W 的双杀:W 两处四连各有独立桥子,封堵交集为空
+        (7, 5): W, (7, 6): W, (7, 7): W, (7, 8): W, (3, 9): W,
+        (9, 5): W, (9, 6): W, (9, 7): W, (9, 8): W, (9, 12): W,
+        # W 自身的一步杀:B 四连 (11,5)-(11,8) + 桥子 (11,12) 射向 (11,9)
+        (11, 5): B, (11, 6): B, (11, 7): B, (11, 8): B, (11, 12): B,
+        (0, 0): B, (0, 1): B, (0, 2): B,
+    }
+    board = _board(stones)
+    attacker_pairs = kill_pairs(board, B, -1, 20, 5, CFG)
+    assert attacker_pairs
+    inter = set(attacker_pairs[0][2]) | {attacker_pairs[0][1]}
+    for _, t, route in attacker_pairs[1:]:
+        inter &= set(route) | {t}
+    assert not inter                     # 双杀:无法同时封堵
+    assert kill_pairs(board, W, -1, 20, 5, CFG)   # 防守方自己的一步杀
+    ctx = ts._Ctx(None, 100000)
+    assert ts.defender_survives(ctx, board, W, 20, 5, CFG, 2)
+    # 去掉防守方的全部杀材(只留两颗孤立 B 子,无法构成反制)后,双杀成立
+    board2 = _board({(7, 5): W, (7, 6): W, (7, 7): W, (7, 8): W, (3, 9): W,
+                     (9, 5): W, (9, 6): W, (9, 7): W, (9, 8): W, (9, 12): W,
+                     (0, 0): B, (14, 14): B})
+    assert not kill_pairs(board2, W, -1, 20, 5, CFG)
+    ctx2 = ts._Ctx(None, 100000)
+    assert not ts.defender_survives(ctx2, board2, W, 20, 5, CFG, 2)
+
+
+def test_p0_defense_reserve_adaptive():
+    """防守 VCF 预留自适应:仅己方已有危险四连(或对方可杀四)时预留大预算;
+    常规中盘/安静局面回收时钟给搜索。"""
+    from antifive import heuristic as h
+    quiet = _board({(7, 7): B, (7, 8): W, (8, 8): B, (0, 0): B, (14, 14): W})
+    assert not h._defense_reserve_needed(quiet, B, -1, 20, 5, CFG)
+    three = _board({(7, 5): B, (7, 6): B, (7, 7): B, (0, 0): B, (14, 14): W})
+    assert not h._defense_reserve_needed(three, B, -1, 20, 5, CFG)
+    four = _board({(7, 5): B, (7, 6): B, (7, 7): B, (7, 8): B, (0, 0): B,
+                   (14, 14): W})
+    assert h._defense_reserve_needed(four, B, -1, 20, 5, CFG)
+    assert h._defense_reserve_needed(quiet, B, 7 * BOARD_SIZE + 7, 20, 5, CFG)
+    # 判负窗口前不预留
+    assert not h._defense_reserve_needed(four, B, -1,
+                                         CFG.loss_start_turns - 1, 5, CFG)
+
+
+def test_p0_defensive_filter_zero_budget_is_noop():
+    """零剩余预算:防守校验立即返回,不改动候选(不超时)。"""
+    from antifive import heuristic as h
+    board = _board({(7, 5): B, (7, 6): B, (7, 7): B, (7, 8): B, (3, 9): B,
+                    (0, 0): W, (14, 14): W})
+    ranked = [(int(m), 1.0) for m in np.nonzero(ReverseGomoku.legal_mask_for(
+        board, B, -1, 5, CFG, 20))[0][:4]]
+    out = h._filter_defensive_kills(list(ranked), board, B, -1, 20, 5, CFG, 0.0)
+    assert out == ranked
+
+
+def test_p0_defensive_vcf_slice_matches_attack():
+    """P0 攻防对等:防守 VCF 预算与进攻同公式;校验覆盖全部候选(源码语义)。"""
+    import inspect
+
+    from antifive import heuristic as h
+    assert h._defensive_vcf_slice(12.0) == h._vcf_slice(12.0)
+    assert h._defensive_vcf_slice(None) == ts.VCF_TIME_CAP
+    src = inspect.getsource(h._filter_defensive_kills)
+    assert "top_n is None" in src and "len(ranked)" in src
+    assert "VCF_NODE_CAP" in src and "// 4" not in src
+
+
+def test_p0_dynamic_deepening_cap():
+    """P0 动态加深:有时限时上限为 MAX_DYNAMIC_DEPTH,不限时保持 depth 硬上限。"""
+    from antifive import heuristic as h
+    assert h.MAX_DYNAMIC_DEPTH >= 12
+    import inspect
+    src = inspect.getsource(h._root_iterative)
+    assert "MAX_DYNAMIC_DEPTH" in src and "max_depth" in src
+
+
 def test_defensive_vcf_demotes_proven_loss(monkeypatch):
     """根候选走完若对手可证明强制杀,该着法降为必败分(防守校验单元)。"""
     from antifive import heuristic as h
@@ -299,15 +378,17 @@ def test_defensive_vcf_demotes_proven_loss(monkeypatch):
 
 
 def test_vcf_defaults_and_budget_slice():
-    """深杀修复:v5.1 默认深度 8/节点 60000;有对局限时时预算按 5% 放宽,
-    夹在 [VCF_TIME_CAP, 0.6s]。"""
-    from antifive.heuristic import _vcf_slice
-    assert ts.VCF_MAX_DEPTH >= 8
-    assert ts.VCF_NODE_CAP >= 60000
+    """冻结档默认深度 8/节点 60000;地狱档深化 VCF:d12/24万节点,
+    限时预算按 15% 放宽,夹在 [VCF_TIME_CAP, VCF_TIME_CAP_HELL]。"""
+    from antifive.heuristic import (
+        VCF_MAX_DEPTH_HELL, VCF_NODE_CAP_HELL, VCF_TIME_CAP_HELL, _vcf_slice)
+    assert ts.VCF_MAX_DEPTH >= 8 and ts.VCF_NODE_CAP >= 60000
+    assert VCF_MAX_DEPTH_HELL >= 12
+    assert VCF_NODE_CAP_HELL >= 240000
     assert _vcf_slice(None) == ts.VCF_TIME_CAP
-    assert _vcf_slice(12.0) == 0.6
-    assert abs(_vcf_slice(2.0) - 0.1) < 1e-9
-    assert _vcf_slice(0.5) == ts.VCF_TIME_CAP
+    assert abs(_vcf_slice(12.0) - VCF_TIME_CAP_HELL) < 1e-9
+    assert abs(_vcf_slice(2.0) - 0.3) < 1e-9
+    assert abs(_vcf_slice(0.5) - 0.075) < 1e-9
 
 
 def test_choose_uses_vcf():

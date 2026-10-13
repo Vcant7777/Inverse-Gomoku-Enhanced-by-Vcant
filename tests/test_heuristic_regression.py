@@ -190,11 +190,13 @@ def test_root_prune_matches_exact_values():
 
 
 def test_pvs_full_width_equivalence(monkeypatch):
+    """PVS 开关等价性(全宽、无 LMR;LMR 由独立机制测试覆盖)。"""
     import antifive.heuristic as h
     monkeypatch.setattr(h, "_include_extras", lambda *a: None)
     monkeypatch.setattr(h, "ROOT_K", 300)
     monkeypatch.setattr(h, "INNER_K", 300)
     monkeypatch.setattr(h, "O_HIST", 0.0)
+    monkeypatch.setattr(h, "USE_LMR", False)
     for g in _random_positions(n_games=2, moves=8, seed=23):
         for depth in (2, 3):
             monkeypatch.setattr(h, "USE_PVS", True)
@@ -206,6 +208,22 @@ def test_pvs_full_width_equivalence(monkeypatch):
             v2 = h._search(g.board, g.current_player, g.pending, g.turn_count,
                            g.white_turns, CFG, depth, -1e18, 1e18, ctx2)
             assert v1 == pytest.approx(v2, abs=1e-9)
+
+
+def test_root_pvs_choose_matches_full_window(monkeypatch):
+    """根 α 传播 + PVS 不得改变最优着法(噪声置 0,同种子对比开关)。"""
+    import antifive.heuristic as h
+    monkeypatch.setattr(h, "O_NOISE", 0.0)
+    for gi, g in enumerate(_random_positions(n_games=2, moves=10, seed=29)):
+        args = (g.board, g.current_player, g.pending, g.turn_count,
+                g.white_turns, CFG)
+        monkeypatch.setattr(h, "NO_ROOT_PVS", True)
+        m_full = h.choose_heuristic_move(*args, np.random.default_rng(gi),
+                                         depth=3, use_vcf=False)
+        monkeypatch.setattr(h, "NO_ROOT_PVS", False)
+        m_pvs = h.choose_heuristic_move(*args, np.random.default_rng(gi),
+                                        depth=3, use_vcf=False)
+        assert m_full == m_pvs and m_pvs is not None
 
 
 def test_load_params_whitelist(tmp_path):
@@ -367,6 +385,60 @@ def test_defensive_filter_backs_off_on_occupy_branch(monkeypatch):
                                      g.turn_count, g.white_turns, CFG, 0.5)
     assert out2[0][1] == h._loss_value(1)          # 已证:降为距离感知必败分
     assert h._loss_value(1) > h._loss_value(0)
+
+
+# ------------------------------------------------- P1 投送预威胁/预防性防守
+def _pregift_position() -> np.ndarray:
+    """B 活三 (7,5)-(7,7) + 投掷子 (7,12) + 桥子 (3,9):
+    白可吃 (7,12) 投送到 (7,8) 形成 B 四连,再由桥子 (3,9) 完成 B 五连。"""
+    return _board({(7, 5): B, (7, 6): B, (7, 7): B, (7, 12): B, (3, 9): B,
+                   (0, 0): W, (0, 1): W, (0, 2): W, (14, 14): W,
+                   (13, 14): W, (14, 13): W, (1, 0): W, (2, 0): W})
+
+
+def test_pregift_defense_finds_block_cells(monkeypatch):
+    """P1(默认关闭,开关可启用):投送路径 (7,11)/(7,10)/(7,9) 应被识别为
+    封堵格;判负窗口前不计算(返回空)。"""
+    from antifive import heuristic as h
+    board = _pregift_position()
+    assert h._pregift_defense(board, B, 5, 20, CFG) == {}   # 默认关闭
+    monkeypatch.setattr(h, "NO_PREGIFT", False)
+    assert h._gift_lethal(board, B, 7 * BOARD_SIZE + 12, 7 * BOARD_SIZE + 8,
+                          5, 20, CFG)
+    cover = h._pregift_defense(board, B, 5, 20, CFG)
+    assert set(cover) == {7 * BOARD_SIZE + 9, 7 * BOARD_SIZE + 10,
+                          7 * BOARD_SIZE + 11}
+    assert h._pregift_defense(board, B, 5, CFG.loss_start_turns - 1, CFG) == {}
+
+
+def test_pregift_candidates_enter_root_window(monkeypatch):
+    """P1(开关启用时):预防性封堵格必须进入根候选(常规静守分体系会埋没)。"""
+    from antifive import heuristic as h
+    monkeypatch.setattr(h, "NO_PREGIFT", False)
+    board = _pregift_position()
+    expect = {7 * BOARD_SIZE + 9, 7 * BOARD_SIZE + 10, 7 * BOARD_SIZE + 11}
+    cands = {int(m) for _, m in h._candidates(board, B, -1, 20, 5, CFG, 1,
+                                              diversity=True)}
+    assert expect & cands
+    plain = {int(m) for _, m in h._candidates(board, B, -1, 20, 5, CFG, 1)}
+    assert not (expect & plain)
+
+
+def test_p2_self_gift3_latent_term(monkeypatch):
+    """P2(开关启用时):潜伏威胁项使己方三连局面价值更低。"""
+    from antifive import heuristic as h
+    monkeypatch.setattr(h, "NO_GIFT3", False)
+    assert h.E_SELF_GIFT3 > 0
+    board = _board({(7, 5): B, (7, 6): B, (7, 7): B, (0, 0): B,
+                    (14, 14): W, (13, 13): W})
+    v0 = h.evaluate(board, B, -1, 20, 5, CFG)
+    old = h.E_SELF_GIFT3
+    try:
+        h.E_SELF_GIFT3 = 0.0
+        v1 = h.evaluate(board, B, -1, 20, 5, CFG)
+    finally:
+        h.E_SELF_GIFT3 = old
+    assert v1 > v0
 
 
 def test_defensive_filter_keeps_mate_distance_order(monkeypatch):

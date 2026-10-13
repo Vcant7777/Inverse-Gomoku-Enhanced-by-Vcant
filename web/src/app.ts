@@ -5,18 +5,25 @@ import { Sounds } from "./audio";
 import { BLACK, BOARD_SIZE, EMPTY, WHITE } from "./types";
 import type { AiResult, GameState } from "./types";
 
-const TIERS = [
+interface Tier {
+  name: string;
+  depth: number;
+  engine?: "hell";        // 指定则强制使用该引擎(地狱档 = 困难之上的防守强化引擎)
+}
+
+const TIERS: Tier[] = [
   { name: "简单", depth: 2 },
   { name: "中等", depth: 4 },
   { name: "困难", depth: 8 },
-] as const;
+  { name: "地狱", depth: 8, engine: "hell" },
+];
 
 // 「不限时」下 AI 的兜底上限(秒):防浏览器端完整深度搜索卡死(Pyodide 无抢占);
 // 引擎到点会中止并返回上一层完整结果。桌面 `--limit none` 无此上限。
 const NO_LIMIT_FALLBACK_SECONDS = 180;
 
 const VERSION_LABELS: Record<string, string> = {
-  beginner: "初级", mid: "中级", advanced: "高级",
+  beginner: "初级", mid: "中级", advanced: "高级", hell: "地狱",
 };
 
 const MODE_NAMES = ["人执黑", "人执白", "人人对战", "机机观战"];
@@ -60,7 +67,7 @@ export class App {
   private tier = 2;
   private limitMode: "none" | "ai" = "ai";
   private limitSeconds = 15;
-  private hver: "beginner" | "mid" | "advanced" = "advanced";
+  private hver: "beginner" | "mid" | "advanced" | "hell" = "advanced";
   private hvcf = true;
 
   private showDanger = false;
@@ -257,11 +264,12 @@ export class App {
       input.name = "tier";
       input.value = String(i);
       input.checked = i === this.tier;
-      label.append(input, document.createTextNode(`${tier.name}(深度 ${tier.depth})`));
+      const note = tier.engine ? "(困难之上)" : `(深度 ${tier.depth})`;
+      label.append(input, document.createTextNode(`${tier.name}${note}`));
       tierRadios.appendChild(label);
     });
     const hverRadios = $("hver-radios");
-    for (const [value, text] of [["beginner", "初级(经典)"], ["mid", "中级(强化)"], ["advanced", "高级(+蒸馏)"]] as const) {
+    for (const [value, text] of [["beginner", "初级(经典)"], ["mid", "中级(强化)"], ["advanced", "高级(+蒸馏)"], ["hell", "地狱(防守强化)"]] as const) {
       const label = document.createElement("label");
       const input = document.createElement("input");
       input.type = "radio";
@@ -502,7 +510,7 @@ export class App {
     try {
       const res = await this.engine.call<AiResult>(
         "ai",
-        { depth: tier.depth, budget, engine: this.hver, vcf: this.hvcf },
+        { depth: tier.depth, budget, engine: this.effectiveEngine(), vcf: this.effectiveVcf() },
         Math.round((budget + 120) * 1000),
       );
       if (epoch !== this.epoch) return;
@@ -950,9 +958,7 @@ export class App {
     $("review-bar").classList.toggle("hidden", !this.review);
     const st = this.state;
     const tier = TIERS[this.tier];
-    const vtxt = this.hver === "beginner"
-      ? "初级"
-      : `${VERSION_LABELS[this.hver]}·${this.hvcf ? "VCF开" : "VCF关"}`;
+    const vtxt = this.versionText();
     $("info-param").textContent = `${vtxt} · 深度 ${tier.depth} 层`;
     const infoLimit = $("info-limit");
     infoLimit.textContent = this.limitMode === "ai" ? `读 ${this.limitSeconds} 秒` : "不限时";
@@ -1137,10 +1143,24 @@ export class App {
     $("review-pos").textContent = `${this.pos} / ${this.variation.length}`;
   }
 
-  private selectedVersion(): "beginner" | "mid" | "advanced" {
+  private selectedVersion(): "beginner" | "mid" | "advanced" | "hell" {
     const el = document.querySelector<HTMLInputElement>('input[name="hver"]:checked');
     const v = el?.value;
-    return v === "beginner" || v === "mid" ? v : "advanced";
+    return v === "beginner" || v === "mid" || v === "hell" ? v : "advanced";
+  }
+
+  private effectiveEngine(): "beginner" | "mid" | "advanced" | "hell" {
+    return TIERS[this.tier].engine ?? this.hver;
+  }
+
+  private effectiveVcf(): boolean {
+    return TIERS[this.tier].engine ? true : this.hvcf;
+  }
+
+  private versionText(): string {
+    const engine = this.effectiveEngine();
+    if (engine === "beginner") return "初级";
+    return `${VERSION_LABELS[engine]}·${this.effectiveVcf() ? "VCF开" : "VCF关"}`;
   }
 
   private syncVcfEnabled(): void {
@@ -1186,10 +1206,7 @@ export class App {
     const seconds = Number(($("limit-seconds") as HTMLInputElement).value);
     if (Number.isFinite(seconds)) this.limitSeconds = Math.max(1, Math.min(600, Math.round(seconds)));
     this.closeSettings();
-    const vtxt = this.hver === "beginner"
-      ? "初级"
-      : `${VERSION_LABELS[this.hver]}·${this.hvcf ? "VCF开" : "VCF关"}`;
-    this.setStatus(`设定已应用: ${vtxt} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"}`);
+    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"}`);
     this.syncPanel();
     this.maybeRunAi();
   }

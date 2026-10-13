@@ -276,7 +276,10 @@ def defender_survives(ctx: _Ctx, board, defender: int, tc: int, wt: int,
         if not inter:
             break
     if not inter:
-        _memo_store(ctx.memo_d, key, False)     # 双杀:无法同时封堵
+        # 双杀:无法同时封堵。注:防守方的多回合"以攻代守"不成立——杀对已
+        # 成立时,防守方不封堵则进攻方下一回合立即完成杀;唯一逃生是防守方
+        # 立刻反杀(已在函数开头 has_kill 检查)。
+        _memo_store(ctx.memo_d, key, False)
         return False
     reach = _defender_reach(board, defender, tc, wt, config)
     for target in inter:

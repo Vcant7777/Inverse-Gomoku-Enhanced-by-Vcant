@@ -1,4 +1,4 @@
-"""启发式引擎版本调度测试:初级/中级/高级三档的统一入口。"""
+"""启发式引擎版本调度测试:初级/中级/高级/地狱四档的统一入口。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ def test_normalize_and_labels():
     assert hv.normalize("beginner") == hv.VERSION_BEGINNER
     assert hv.normalize("mid") == hv.VERSION_MID
     assert hv.normalize("advanced") == hv.VERSION_ADVANCED
+    assert hv.normalize("hell") == hv.VERSION_HELL
+    assert hv.normalize("地狱") == hv.VERSION_HELL
     assert hv.normalize("old") == hv.VERSION_BEGINNER     # 兼容旧值
     assert hv.normalize("new") == hv.VERSION_ADVANCED     # 兼容旧值
     assert hv.normalize(None) == hv.VERSION_ADVANCED
@@ -25,15 +27,19 @@ def test_normalize_and_labels():
     assert hv.label("beginner") == "初级"
     assert hv.label("mid") == "中级"
     assert hv.label("advanced") == "高级"
+    assert hv.label("hell") == "地狱"
     assert hv.label("old") == "初级"
     assert hv.supports_vcf("beginner") is False
     assert hv.supports_vcf("mid") is True
     assert hv.supports_vcf("advanced") is True
+    assert hv.supports_vcf("hell") is True
+    assert hv.VERSION_CHOICES == ("beginner", "mid", "advanced", "hell")
 
 
 @pytest.mark.parametrize("version,use_vcf", [
     ("beginner", True), ("mid", True), ("mid", False),
-    ("advanced", True), ("advanced", False)])
+    ("advanced", True), ("advanced", False),
+    ("hell", True), ("hell", False)])
 def test_choose_and_analysis_dispatch(version, use_vcf):
     g = ReverseGomoku()
     rng = np.random.default_rng(0)
@@ -101,17 +107,20 @@ def test_choose_analysis_consistency():
                 assert val >= top_v - h.O_NOISE - 1e-9, \
                     f"choose(root_prune={rp}) 偏离 analysis: {mv} v={val} top={top_v}"
     # 冻结快照仍可加载(供 match_ai --old-module A/B)
+    from antifive.tools import heuristic_v6
     assert heuristic_v4.choose_heuristic_move is not None
     assert heuristic_v5.choose_heuristic_move is not None
+    assert heuristic_v6.choose_heuristic_move is not None
 
 
-def test_gui_engine_accepts_three_versions():
+def test_gui_engine_accepts_four_versions():
     pytest.importorskip("pygame")
     from antifive.gui import _HeuristicEngine
     g = ReverseGomoku()
     cases = (("beginner", True, False), ("beginner", False, False),
              ("mid", True, True), ("mid", False, False),
-             ("advanced", True, True), ("advanced", False, False))
+             ("advanced", True, True), ("advanced", False, False),
+             ("hell", True, True), ("hell", False, False))
     for version, vcf, expected_vcf in cases:
         eng = _HeuristicEngine(depth=1, time_budget=None,
                                version=version, use_vcf=vcf)
@@ -119,3 +128,11 @@ def test_gui_engine_accepts_three_versions():
         assert eng.use_vcf == expected_vcf     # 初级强制无 VCF
         move = eng.choose(g)
         assert move is not None and g.legal_mask()[move]
+
+
+def test_advanced_snapshot_equals_v6_module():
+    """「高级」必须指向冻结快照 v6(不再指向强化后的 hell 实现)。"""
+    from antifive import heuristic_versions as hv
+    from antifive.tools import heuristic_v6
+    assert hv._adv() is heuristic_v6
+    assert hv.label("advanced") == "高级"

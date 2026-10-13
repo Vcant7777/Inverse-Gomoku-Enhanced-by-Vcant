@@ -1,4 +1,25 @@
-"""启发式小 AI(强化版):极小化搜索 + 全局局面评估 + 选择性候选着法
+"""启发式小 AI(强化版「地狱」):极小化搜索 + 全局局面评估 + 选择性候选着法
+
+v6(2026-10-13,防守强化;「高级」已冻结为 tools/heuristic_v6.py):
+- 深化 VCF(对高级 +112 Elo 的主要来源):强制杀链 d8/6 万节点/0.6s →
+  d12/24 万节点/≤1.8s(攻防同预算;无对局限时用确定性节点上限);
+- P0 时间与防守资源:进攻 VCF + 主搜索 + 防守校验的总墙钟从 choose 入口
+  计时并 ≤ 时限(修复此前进攻 VCF 不计入预算、平均数秒/步的超时);
+  防守校验覆盖全部候选、节点上限与进攻一致、共享 deadline;防守预留自适应
+  (仅己方已有危险四连/对方可杀四时预留大预算,常规中盘只留 0.1s);
+  迭代加深时限驱动(上限 MAX_DYNAMIC_DEPTH 层);
+- P1 预防性防守候选(ANTIFIVE_PREGIFT=1 启用,默认关闭):投送预威胁枚举
+  (对方一步把己方子投进己方三连/跳形即成四/五的枢纽),对确成杀的投送
+  收集射线封堵格补入根候选;严格等时对拍净负(根候选变多、搜索变浅);
+- P2 潜伏威胁评估(ANTIFIVE_GIFT3=1 启用,默认关闭):E_SELF_GIFT3(己方
+  三连"可被投送成四"专项负债);严格等时对拍净负;参数隔离机制保留
+  (data/params_hell.json 优先,缺失回退 params.json);
+- P3 复核返工:多回合"以攻代守"在杀对已成立时不成立(不封堵则进攻方下一
+  回合立即完成杀),仅有"立刻反杀"是逃生(原 has_kill 检查已覆盖);不引入
+  不成立的放宽,补回归测试锁定该语义(见 test_threat_search.py);
+- 已否决(默认关闭,代码保留):根 α 传播 + PVS 与 LMR 速度收益大,但搜索树
+  依赖搜索历史(TT/killer 会补进搜索集合),零窗边界失效(对拍 25%~38%),
+  待候选集合确定性改造后再评估。
 
 v5.3(2026-10-10,step30 复盘归因的两处低风险修复):
 - "上一手吃子"保送槽:搜索递归携带 opp_last,应招节点强制保留"占领对手
@@ -80,8 +101,8 @@ from . import record as record_mod
 from .paths import data_dir
 from .reversegomoku import (
     BLACK, BOARD_SIZE, DIRECTIONS, EMPTY, GameConfig, LINE_IDX, MOVE_DIRS,
-    MOVE_DISTS, PLACE_SIZE, RAYS, ReverseGomoku, WHITE, danger_map_for,
-    fwd_run_lengths,
+    MOVE_DISTS, PLACE_SIZE, RAYS, ReverseGomoku, WHITE, check_win_at,
+    danger_map_for, fwd_run_lengths,
 )
 from . import distill
 from . import openbook
@@ -114,6 +135,9 @@ E_CENTER_OPP = 0.70             # 对方棋子中心度:被推中间=空间大�
 E_CENTER_SELF = 0.80            # 己方棋子中心度:自己居中同样易连五=负债(零和,落子偏中环)
 E_CLUSTER = 0.03                # 己方棋子"居中×聚集"联合负债:被推中聚团=大危险
                                 # (分散推中间不罚,聚团推中间重罚——直接反制推中战术)
+E_SELF_GIFT3 = 0.15             # P2 潜伏威胁:己方三连(活三/跳三)被对方一步
+                                # 投送成四的潜在负债(在 E_SELF_OPEN3/JUMP3 之上
+                                # 追加的"可被投送"专项惩罚,hell 专用)
 
 # ---- 候选排序分(搜索内部) ----
 O_KILL = 1e5
@@ -136,6 +160,11 @@ O_GIFT_D2 = 3.0                # 安置:落子后两轴各成连二(双二雏形
 O_GIFT_D3 = 8.0                # 安置:落子后两轴各成活三(双活三,I4 类枢纽)= 大礼
                                # (单轴 lt 公式看不见"两轴各成三",靠 lt2 补齐)
 O_LAST_CAP = 1e-6              # 保送槽分:吃对手上一手落子的强制入窗候选(仅排序)
+O_PREVENT = 2e3                # P1 预防性封堵候选排序分:堵对方"投送己方三连成
+                               # 可杀四"的射线路径(高于造材,低于必守)
+PREGIFT_K = 3                  # P1 每次根候选生成最多补充的预防性封堵格数
+PREGIFT_HUB_CAP = 48           # P1 投送枢纽枚举上限(成本控制)
+PREGIFT_SIM_CAP = 96           # P1 预威胁模拟(投掷子,枢纽)次数上限
 O_SPREAD = 1.0                 # 落子:远离己方棋子(打散自己)
 O_MIDDLE = 0.0                 # 落子:不奖励中场落子(置 0 停用)。
                                 # 棋理:己方棋子尽量在边角(安全,不给自己送连五材料),
@@ -147,9 +176,78 @@ PVS_EPS = 1e-6                  # PVS 零窗口宽度(浮点评估值)
 USE_PVS = True                  # 内部控制:PVS 零窗口(可关闭做一致性对拍)
 USE_EXT = True                  # 内部控制:强制局面扩展(可关闭做一致性对拍)
 
-ROOT_K = 8                      # 根节点候选数
+ROOT_K = 8                      # 根节点候选数(每个类别:空位/占领各至多 k 个)
 INNER_K = 6                     # 内部节点候选数(浅层)
 DEFAULT_DEPTH = 2
+MAX_DYNAMIC_DEPTH = 16          # 有时限时迭代加深的上限(深度参数不再是硬上限:
+                                # 预算用满前逐层加深,防守需要的深手数由时限兜底)
+
+# ---- LMR(晚着法降价):加深实际到达的层数 ----
+# 实测 12s 下 d6≈8.5s、d7≈32s(根 18 候选),alpha-beta 实际只到第 6 层;
+# 对排位靠后的非战术着法先按 d-1/d-2 零窗试搜,超上界再按全深度重搜。
+# 保护项:战术着法(O_ROUTE 及以上)、前 3 个着法、TT 着法、强制节点、
+# 加深扩展节点、浅层(d<3)不降价。
+USE_LMR = False                 # 配对对拍显示净负(48 局 8:13),默认关闭;
+LMR_MIN_DEPTH = 3               # 代码保留供 A/B(ANTIFIVE_NO_LMR 可关闭)
+LMR_MIN_IDX = 3
+
+# ---- 根 α 传播 + PVS(默认关闭,仅 A/B 研究用) ----
+# 速度收益极大(根 10 候选 d7 由 ~10s 降到 ~3s),但当前搜索树依赖搜索历史
+# (`_include_extras` 会把 TT/killer 着法补进搜索集合,扩展也随之变化):
+# 零窗试搜与全窗搜索会走不同的树,零窗返回的"不优"上界可能失真(实测把
+# 真实最优着法从 0.871 低估到 0.412,对拍胜率 25%~38%)。除非把候选集合
+# 改为与搜索历史无关,否则不得启用。
+USE_ROOT_PVS = False
+
+# ---- 地狱档能力开关(默认全开;仅供内部 A/B 归因与回退) ----
+def _env_off(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_on(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() not in ("0", "false", "no", "off", "")
+
+
+NO_DYNAMIC = _env_off("ANTIFIVE_NO_DYNAMIC")    # 关 P0 时限动态加深
+# P1/P2 默认关闭:严格 12s 等时对拍显示它们净负(见 docs/engines.md);
+# ANTIFIVE_PREGIFT=1 / ANTIFIVE_GIFT3=1 可启用做 A/B。
+NO_PREGIFT = not _env_on("ANTIFIVE_PREGIFT", False)
+NO_GIFT3 = not _env_on("ANTIFIVE_GIFT3", False)
+NO_HELL_PARAMS = _env_off("ANTIFIVE_NO_HELL_PARAMS")  # P2 参数回退 params.json
+NO_LMR = _env_off("ANTIFIVE_NO_LMR")            # 关 LMR(晚着法降价)
+NO_ROOT_PVS = _env_off("ANTIFIVE_NO_ROOT_PVS")  # 关根 α 传播 + PVS
+# 根节点每类核心候选数(空位/占领;其余名额留给先验/多样性/预防性防守)。
+# 8=保留完整根宽(默认,与原实现一致);4=收窄根宽换深度(A/B 用,
+# 实测在完整根窗搜索下收益不稳定,故默认不启用)。
+ROOT_K_CORE = _env_int("ANTIFIVE_ROOT_CORE", 8)
+
+
+# ---- 地狱档深化 VCF:杀链深度/节点/时限显著高于冻结档 ----
+# 整局走向常由"占领+安置"强制杀链决定(对 KataGo 复盘:96/96 败局均为移子
+# 杀),冻结档 VCF 深度 8/60000 节点/0.6s 在深杀链上漏杀,防守端也因此漏看。
+VCF_MAX_DEPTH_HELL = _env_int("ANTIFIVE_HELL_VCF_DEPTH", 12)
+VCF_NODE_CAP_HELL = _env_int("ANTIFIVE_HELL_VCF_NODES", 240000)
+VCF_TIME_CAP_HELL = _env_float("ANTIFIVE_HELL_VCF_TIME", 1.8)
+# 无对局限时(不限时/批量生成)的确定性节点上限:不用墙钟(结果可复现),
+# 上限与旧 0.05s 墙钟的典型消耗相当,兼顾批量生成吞吐。
+VCF_NODE_CAP_UNLIMITED = max(1000, threat_search.VCF_NODE_CAP // 16)
 
 
 def _inner_k(depth: int) -> int:
@@ -164,6 +262,8 @@ def _inner_k(depth: int) -> int:
 # ---- 调优参数运行时加载(data/params.json) ----
 # 白名单:E_*/O_* 数值常量与 ROOT_K/INNER_K(与 tools/param_tune.py 的
 # _PARAM_RANGES 对应)。加载只覆盖这些键,防止外部文件篡改搜索常量。
+# 地狱档参数隔离:data/params_hell.json 存在时优先(缺失回退 params.json),
+# 避免调参影响冻结的初级/中级/高级档。
 _PARAM_NAMES = frozenset(
     k for k, v in list(globals().items())
     if (k.startswith("E_") or k.startswith("O_"))
@@ -174,9 +274,17 @@ _PARAMS_LOCK = threading.Lock()
 _PARAMS_LOADED = False
 
 
+def _default_params_path() -> Path:
+    """地狱档默认参数文件:params_hell.json 优先,缺失/开关关闭回退 params.json。"""
+    p = data_dir() / "params_hell.json"
+    if NO_HELL_PARAMS or not p.exists():
+        return data_dir() / "params.json"
+    return p
+
+
 def load_params(path: str | os.PathLike | None = None,
                 force: bool = False) -> dict:
-    """从 data/params.json 读取调优参数并应用(白名单键)。
+    """从 data/params_hell.json(缺失回退 params.json)读取调优参数并应用。
 
     返回实际应用的 {键: 值};文件缺失/非法时返回空 dict。线程安全,
     force=False 时进程内只加载一次(配合 ensure_params 懒加载)。"""
@@ -185,7 +293,7 @@ def load_params(path: str | os.PathLike | None = None,
         if _PARAMS_LOADED and not force:
             return {}
         _PARAMS_LOADED = True
-        p = Path(path) if path is not None else (data_dir() / "params.json")
+        p = Path(path) if path is not None else _default_params_path()
         try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)
@@ -397,6 +505,26 @@ def _loses_to_kill(board: np.ndarray, player: int, white_turns: int,
                               config)["killable4"] > 0)
 
 
+def _defense_reserve_needed(board: np.ndarray, player: int, pending: int,
+                            turn_count: int, white_turns: int,
+                            config: GameConfig) -> bool:
+    """是否需要为本步预留大额防守 VCF 预算。
+
+    防守校验的价值集中在"己方已有危险四连(对方下一步可完成)/对方已有可杀
+    四(攻防转换)"这类局面;仅有三连/跳三的常规中盘,己方着法造四的即时危险
+    已由搜索硬判负覆盖,防守校验几乎无事可做,预留的大预算会被白扔——回收
+    给主搜索加深(见 _root_iterative)。"""
+    if pending >= 0:
+        return True
+    if turn_count < config.loss_start_turns:
+        return False
+    m_black, m_white, _, _, _, _ = _board_features(
+        board, white_turns, turn_count, config)
+    mine = m_black if player == BLACK else m_white
+    theirs = m_white if player == BLACK else m_black
+    return bool(mine["killable4"] or mine["dead4"] or theirs["killable4"])
+
+
 def _threats(board: np.ndarray, player: int, white_turns: int,
              turn_count: int, config: GameConfig) -> tuple:
     """己方被杀威胁分析,返回 (ends, route):
@@ -433,6 +561,97 @@ def _threats(board: np.ndarray, player: int, white_turns: int,
                     ends.add(T)
                     route.update(mid)
     return ends, route
+
+
+# ---- P1 投送预威胁(预防性防守候选) ----
+def _gift_lethal(board: np.ndarray, player: int, c: int, t: int,
+                 white_turns: int, turn_count: int, config: GameConfig) -> bool:
+    """对方一个回合把己方棋子 c(被占领)投送到空位 t 后,是否立刻成杀威胁。
+
+    t 满足"落己方子即成四/五"(由 _pregift_defense 的 lt_self ≥ 4 筛选)。
+    模拟 c 离盘 + 己方子在 t 落定:
+    - 直接在 t 完成己方五连 → 对方本回合即胜(必死);
+    - 否则用 _threats 判定是否形成"对方下一步可完成的四"(有桥子可达完成格)。"""
+    if board.reshape(-1)[c] != player or board.reshape(-1)[t] != EMPTY:
+        return False
+    b2 = board.copy()
+    cr, cc = divmod(int(c), BOARD_SIZE)
+    tr, tc = divmod(int(t), BOARD_SIZE)
+    b2[cr, cc] = EMPTY
+    b2[tr, tc] = player
+    if check_win_at(b2, tr, tc, player):
+        return True
+    ends, _route = _threats(b2, player, white_turns, turn_count, config)
+    return bool(ends)
+
+
+def _pregift_defense(board: np.ndarray, player: int, white_turns: int,
+                     turn_count: int, config: GameConfig) -> dict:
+    """P1 预防性封堵格:{cell: 覆盖权重}。
+
+    枚举"投送枢纽"t(空位且落己方子后经过 t 的最大连续数 ≥ 4,即对方一个
+    回合可把己方棋子投送到此造出己方四连/五连),以及每个射向上可作为
+    投掷子的己方棋子 c(c→t 路径全空);模拟判定该投送确为杀威胁后,把
+    c→t 路径上的空格记为封堵点(占任一格即断该投送)。权重 = 覆盖的
+    (投掷子, 枢纽) 对数,供根候选按"一子堵多条"排序。
+
+    仅根候选生成调用(diversity=True),枚举上限 PREGIFT_HUB_CAP /
+    PREGIFT_SIM_CAP 控制成本;结论不作为硬剪枝,交由搜索评估。"""
+    if NO_PREGIFT or turn_count < config.loss_start_turns:
+        return {}
+    opp = _other(player)
+    if opp == WHITE and white_turns < config.white_restrict_turns:
+        return {}                       # 对手(白)禁移期无法投送
+    flat = board.reshape(-1)
+    # 枢纽 = 落己方子后经过该格的最大子数 ≥ 4(含跳形:跳三缺口/一空档延伸,
+    # 单靠 lt_self 的连续游程看不见这些格,用 jump_through 精确判定)。
+    hubs = []
+    for t0 in np.nonzero(flat == EMPTY)[0]:
+        ti = int(t0)
+        r, c = divmod(ti, BOARD_SIZE)
+        if _jump_through(board, r, c, player) >= 4:
+            hubs.append(ti)
+    if not hubs:
+        return {}
+    cover: dict = {}
+    n_sim = 0
+    for t in hubs[:PREGIFT_HUB_CAP]:
+        ti = int(t)
+        for d in range(MOVE_DIRS):
+            path = []
+            for k in range(MOVE_DISTS):
+                cell = int(RAYS[ti, d, k])
+                if cell < 0:
+                    break
+                v = flat[cell]
+                if v == EMPTY:
+                    path.append(cell)
+                    continue
+                if v == player and path:
+                    if n_sim >= PREGIFT_SIM_CAP:
+                        return cover
+                    n_sim += 1
+                    if _gift_lethal(board, player, cell, ti, white_turns,
+                                    turn_count, config):
+                        for x in path:
+                            cover[x] = cover.get(x, 0.0) + 1.0
+                break
+    return cover
+
+
+def _append_pregift(out: list, cover: dict, mask: np.ndarray,
+                    limit: int = PREGIFT_K) -> None:
+    """把覆盖权重最高的若干合法封堵格补进候选(去重、低分,O_PREVENT 级)。"""
+    if not cover:
+        return
+    present = {m for _, m in out}
+    items = [(w, c) for c, w in cover.items()
+             if bool(mask[c]) and c not in present]
+    if not items:
+        return
+    items.sort(key=lambda t: (-t[0], -t[1]))
+    for w, c in items[:limit]:
+        out.append((O_PREVENT + min(float(w), 99.0), int(c)))
 
 
 # ---- 双色线级模式提取(Phase B:跳三/断四/双杀感知) ----
@@ -642,6 +861,10 @@ def evaluate(board: np.ndarray, player: int, pending: int, turn_count: int,
     s -= E_SELF_KILLABLE4 * mine["killable4"] + E_SELF_DEAD4 * mine["dead4"]
     s -= E_SELF_OPEN3 * mine["open3"] + E_SELF_JUMP3 * mine["jump3"] \
         + E_SELF_CLOSED3 * mine["closed3"]
+    # P2 潜伏威胁:己方三连可被对方一步投送成四(对方造杀素材),在基础
+    # 负债系数之上追加"可被投送"专项惩罚
+    if not NO_GIFT3:
+        s -= E_SELF_GIFT3 * (mine["open3"] + mine["jump3"])
     # 双杀:对方两处可杀四 = 一次防守只能挡一处,必死;可杀四+三 = 双威胁链
     if theirs["killable4"] >= 2:
         s += E_DOUBLE_KILL
@@ -819,13 +1042,17 @@ def _value_features(player: int, m_black: dict, m_white: dict, danger_cnt: int,
 def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
                 white_turns: int, config: GameConfig, k: int,
                 history=None, out_legal=None, diversity: bool = False,
-                prior: bool = False, opp_last: int = -1) -> list:
+                prior: bool = False, opp_last: int = -1,
+                core_k: int | None = None) -> list:
     """选择性候选着法 [(排序分, move), ...] 降序。杀/解杀/堵路线 + 前 k 构造与位置着。
     history: 可选历史启发分数组(参与入选排序);
     out_legal: 可选 list,回填合法掩码数组(避免调用方重复计算掩码);
     diversity: 根节点专用,额外保留"贴己方棋群/安静关键点"型着法入候选;
     prior: 根节点专用,叠加 KataGo 蒸馏先验(缺失模型时自动忽略);
-    opp_last: 可选,对手最近落下的己方子格(-1=未知);命中时"吃该子"保送入窗。"""
+    opp_last: 可选,对手最近落下的己方子格(-1=未知);命中时"吃该子"保送入窗;
+    core_k: 可选,核心类别(空位/占领/安置)各自入选上限;根节点用更小的
+    核心宽度控制根宽(总候选 = 核心 + 先验/多样性/预防性防守等补充项)。"""
+    kk = k if core_k is None else min(core_k, k)
     opp = _other(player)
     mask = ReverseGomoku.legal_mask_for(board, player, pending, white_turns,
                                         config, turn_count)
@@ -891,7 +1118,7 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
                 scored = scored + pw * prior_map[rest_arr]
             # 选取只用静态分+先验(与搜索顺序/历史无关,保证候选集合可复现);
             # 历史启发仅参与已入选着法的最终排序
-            m = min(k, rest_arr.size)
+            m = min(kk, rest_arr.size)
             idx = np.argpartition(scored, -m)[-m:]
             if hist_f is not None:
                 order = scored[idx] + hist_f[rest_arr[idx]]
@@ -906,6 +1133,9 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
             _append_prior_top(out, legal, prior_map)
         if diversity:
             _append_diversity(out, legal, nb_self_f)
+            # P1:预防性封堵(对方下一步投送己方三连成杀)的射线格入根候选
+            _append_pregift(out, _pregift_defense(board, player, white_turns,
+                                                  turn_count, config), mask)
         return sorted(out, reverse=True)
     ends, route = _threats(board, player, white_turns, turn_count, config)
     kc = kill_captures(board, player, pending, turn_count, white_turns,
@@ -954,7 +1184,7 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
         key = base[empty_cells] + dens[empty_cells]
         if prior_map is not None:
             key = key + pw * prior_map[empty_cells]
-        m = min(k, empty_cells.size)
+        m = min(kk, empty_cells.size)
         idx = np.argpartition(key, -m)[-m:]
         if hist_f is not None:
             order = base[empty_cells][idx] + hist_f[empty_cells[idx]] \
@@ -994,7 +1224,7 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
             if val.any():
                 s += float(pmap[ray[val]].max())
             cap_scores[i] = s
-        m = min(k, cap_cells.size)
+        m = min(kk, cap_cells.size)
         key = cap_scores + dens[cap_cells]
         if prior_map is not None:
             key = key + pw * prior_map[cap_cells]
@@ -1008,6 +1238,9 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
         _append_prior_top(out, legal, prior_map)
     if diversity:
         _append_diversity(out, legal, nb_self_f)
+        # P1:预防性封堵(对方下一步投送己方三连成杀)的射线格入根候选
+        _append_pregift(out, _pregift_defense(board, player, white_turns,
+                                              turn_count, config), mask)
     # 保送槽:吃对手上一手落子(浅层宽度剪枝最容易漏掉的反击,强制入窗)
     if opp_last >= 0 and int(flat[opp_last]) == opp and bool(mask[opp_last]) \
             and all(mm != opp_last for _, mm in out):
@@ -1138,7 +1371,7 @@ def _search(board: np.ndarray, player: int, pending: int, turn_count: int,
     alpha0 = alpha
     searched = False
     ext_used = False                  # 本节点是否对子节点做过强制扩展(存表降标用)
-    for idx, (_, m) in enumerate(cands):
+    for idx, (cand_score, m) in enumerate(cands):
         if ctx.deadline is not None and (idx & 3) == 0 \
                 and time.perf_counter() > ctx.deadline:
             ctx.aborted = True
@@ -1168,28 +1401,52 @@ def _search(board: np.ndarray, player: int, pending: int, turn_count: int,
             d2 = depth - 1
             # 保送槽传递:安置步后我方最新子=占领格;普通落子=刚下的 m
             child_opp_last = pending if pending >= 0 else int(m)
+            extended = False
+            child_ext = ext_budget
             if USE_EXT and ext_budget > 0 \
                     and (forced
                          or (pending >= 0
                              and _jump_through(b2, r, c, opp) >= 4
                              and _loses_to_kill(b2, opp, wt2, tc2, config))):
                 # 强制局面(本节点只剩单一防守/造对方可杀四):对方应手极少,
-                # 多搜一层几乎不增加分支,沿强制链看得更深
+                # 多搜一层几乎不增加分支,沿强制链看得更深(预算一次消耗:
+                # 本节点首个触发扩展的子树获得加深,其余兄弟不扩展)
                 d2 = depth
+                child_ext = 0
                 ext_budget = 0
                 ext_used = True
+                extended = True
             if not searched or not USE_PVS:
                 v = -_search(b2, p2, pend2, tc2, wt2, config, d2,
-                             -beta, -alpha, ctx, ext_budget=ext_budget,
+                             -beta, -alpha, ctx, ext_budget=child_ext,
                              ply=ply + 1, opp_last=child_opp_last)
             else:
-                v = -_search(b2, p2, pend2, tc2, wt2, config, d2,
-                             -alpha - PVS_EPS, -alpha, ctx,
-                             ext_budget=ext_budget, ply=ply + 1,
-                             opp_last=child_opp_last)
+                # LMR:晚序的安静着法先按 d-1/d-2 零窗试搜,超上界再全深度重搜。
+                # 战术着法(O_ROUTE 及以上)/前 3 着/TT 着法/强制或加深节点不降价。
+                d_red = d2
+                if (USE_LMR and not NO_LMR and not extended and not forced
+                        and d2 >= LMR_MIN_DEPTH and idx >= LMR_MIN_IDX
+                        and cand_score < O_ROUTE
+                        and (tt_move is None or m != tt_move)):
+                    d_red = max(1, d2 - (2 if idx >= 6 else 1))
+                if d_red < d2:
+                    v = -_search(b2, p2, pend2, tc2, wt2, config, d_red,
+                                 -alpha - PVS_EPS, -alpha, ctx,
+                                 ext_budget=child_ext, ply=ply + 1,
+                                 opp_last=child_opp_last)
+                    if v > alpha:
+                        v = -_search(b2, p2, pend2, tc2, wt2, config, d2,
+                                     -alpha - PVS_EPS, -alpha, ctx,
+                                     ext_budget=child_ext, ply=ply + 1,
+                                     opp_last=child_opp_last)
+                else:
+                    v = -_search(b2, p2, pend2, tc2, wt2, config, d2,
+                                 -alpha - PVS_EPS, -alpha, ctx,
+                                 ext_budget=child_ext, ply=ply + 1,
+                                 opp_last=child_opp_last)
                 if alpha < v < beta:
                     v = -_search(b2, p2, pend2, tc2, wt2, config, d2,
-                                 -beta, -alpha, ctx, ext_budget=ext_budget,
+                                 -beta, -alpha, ctx, ext_budget=child_ext,
                                  ply=ply + 1, opp_last=child_opp_last)
             if ctx.aborted:
                 return best               # 子树超时:整棵返回近似值
@@ -1224,23 +1481,22 @@ def _search(board: np.ndarray, player: int, pending: int, turn_count: int,
 
 
 def _vcf_slice(time_budget: float | None) -> float:
-    """单步 VCF 预算:无对局限时时用模块默认(0.05s);有 budget 时按其 5%
-    放宽并夹在 [VCF_TIME_CAP, 0.6s]。深一层的杀链证明需要更大预算(复盘:
-    用户局 step75 的白 I13 强制胜须 d8/0.5s 才可证,旧 0.05s 漏掉)。"""
+    """单步 VCF 预算:无对局限时时用基础预算(0.05s);有 budget 时按其 15%
+    放宽并夹在 [VCF_TIME_CAP, VCF_TIME_CAP_HELL]。
+    地狱档杀链更深(d12/24万节点),需要更长证明预算;冻结档保持 5%/0.6s。"""
     base = threat_search.VCF_TIME_CAP
     if not time_budget:
         return base
-    return min(0.6, max(base, 0.05 * time_budget))
+    return min(VCF_TIME_CAP_HELL, max(base, 0.15 * time_budget))
 
 
 def _defensive_vcf_slice(time_budget: float | None) -> float:
     """单步"防守 VCF"总预算(校验根候选走完后对手是否有强制杀)。
 
-    有对局限时时取剩余时间的 2.5%,夹在 [0.02s, 0.3s];不限时 0.05s。
-    从主搜索预算中预留(见 _root_iterative),不额外超时。"""
-    if not time_budget:
-        return 0.05
-    return min(0.3, max(0.02, 0.025 * time_budget))
+    P0 攻防对等:与进攻侧 `_vcf_slice` 同公式(限时取 5% 夹在
+    [VCF_TIME_CAP, 0.6s],不限时用基础预算),从主搜索预算中预留
+    (见 _root_iterative),不额外超时。"""
+    return _vcf_slice(time_budget)
 
 
 def _loss_value(turns: int) -> float:
@@ -1257,7 +1513,7 @@ def _proven_loss_value(board, opp, tc, wt, config, deadline, node_cap):
     """行棋方为 opp 的局面:可证其强制杀时返回对应必败分,未证/超时 None。"""
     got = threat_search.find_forced_kill_depth(
         board, opp, -1, tc, wt, config,
-        max_depth=threat_search.VCF_MAX_DEPTH,
+        max_depth=VCF_MAX_DEPTH_HELL,
         deadline=deadline, node_cap=node_cap)
     if got is None:
         return None
@@ -1283,7 +1539,7 @@ def _occupy_turn_loss(b2, p2, pend2, tc2, wt2, config, opp,
             continue                       # 自杀安置(掩码外,保守跳过)
         if opp == WHITE and wt3 < config.white_restrict_turns:
             return False, None             # 对手(白)禁移期不可能有杀
-        if time.perf_counter() > deadline:
+        if deadline is not None and time.perf_counter() > deadline:
             return False, None             # 未完成证明:保守视为安全
         if threat_search.has_kill(b3, opp, -1, tc3, wt3, config):
             val = _loss_value(0)
@@ -1300,16 +1556,20 @@ def _occupy_turn_loss(b2, p2, pend2, tc2, wt2, config, opp,
 
 
 def _filter_defensive_kills(ranked, board, player, pending, turn_count,
-                            white_turns, config, total_budget: float,
-                            top_n: int = 3):
+                            white_turns, config, total_budget: float | None,
+                            top_n: int | None = None):
     """把"走完轮到对手、对手可证明强制杀"的根着法降为必败分。
 
     降分带距离(见 _loss_value):不再用 -(WIN-1),保证 VCF 已证必败不会
     排在搜索已证更短的杀之后;占领步按"占领+全部安置"整回合校验,全部
     安置必败才降(任一安置未被证明必败则该候选视为安全、不降)。
     VCF 结论保守(找不到 ≠ 安全),只用于避免确定性送杀;已有我方确定杀着
-    (|v| ≥ MATE_LIMIT)不再检查。total_budget 为本次校验的总预算(秒),
-    平分给前 top_n 个候选。"""
+    (|v| ≥ MATE_LIMIT)不再检查。
+
+    P0:默认校验全部候选(按根排序,最可能被选中的着法优先),节点上限与
+    进攻 VCF 一致;候选共享同一总 deadline(total_budget;None = 不限墙钟,
+    由节点上限保证确定性上界),速败候选快速证明后把剩余预算留给后面的
+    候选——不再按候选数固定均分。"""
     if not ranked or turn_count < config.loss_start_turns:
         return ranked
     if ranked[0][1] >= MATE_LIMIT:
@@ -1317,14 +1577,19 @@ def _filter_defensive_kills(ranked, board, player, pending, turn_count,
     opp = _other(player)
     if opp == WHITE and white_turns < config.white_restrict_turns:
         return ranked                       # 对手(白)禁移期不可能有杀
-    share = total_budget / max(top_n, 1)
-    node_cap = max(2000, threat_search.VCF_NODE_CAP // 4)
+    if top_n is None:
+        top_n = len(ranked)
+    node_cap = (VCF_NODE_CAP_HELL if total_budget is not None
+                else VCF_NODE_CAP_UNLIMITED)
+    deadline = (time.perf_counter() + total_budget
+                if total_budget is not None else None)
     changed = False
     for i in range(min(top_n, len(ranked))):
         m, v = ranked[i]
         if abs(v) >= MATE_LIMIT:
             continue
-        deadline = time.perf_counter() + share
+        if deadline is not None and time.perf_counter() > deadline:
+            break                           # 共享预算耗尽:剩余候选保守视为安全
         b2, p2, pend2, tc2, wt2, loser = ReverseGomoku.apply_step(
             board, m, player, pending, turn_count, white_turns, config)
         if loser != 0:
@@ -1350,13 +1615,19 @@ def _filter_defensive_kills(ranked, board, player, pending, turn_count,
 
 def _root_iterative(board, player, pending, turn_count, white_turns, config,
                     rng, depth, time_budget, k, node_cb=None, report_cb=None,
-                    tt=None, noise: float = 0.0):
+                    tt=None, noise: float = 0.0, time_start: float | None = None):
     """根节点迭代加深公共实现:choose 与 analysis 共用,保证两者同值同选。
 
     先验杀着与 VCF 由调用方处理;这里只做"候选生成 + 逐层全窗口根评估"。
     noise>0 时给每个根着法价值加 [0, noise) 随机量(仅对局侧用于同分打散,
     分析传 0)。node_cb(节点数) 与 report_cb(候选列表) 语义不同,分别对应
     choose 与 analysis 的进度回调。
+    有 time_budget 时迭代加深由时限驱动(depth 仅决定至少完成的层数,上限
+    MAX_DYNAMIC_DEPTH);不限时时 depth 为硬上限。
+    time_start: 本步起始时刻(含进攻 VCF 的耗时),使"进攻 VCF + 主搜索 +
+    防守校验"的总墙钟 ≤ time_budget;None 时以进入本函数为起点。
+    防守预算是自适应的:只有存在战术材料时才预留大额 VCF 预算,安静局面
+    预留小预算、把时钟让给搜索加深(见 _defense_reserve_needed)。
     返回 (ranked, ok):ranked = 最后一次完整深度的 [(着法, 价值)] 降序;
     无任何合法着法时 ok=False(调用方决定返回 None 还是空列表)。"""
     opp = _other(player)
@@ -1367,7 +1638,8 @@ def _root_iterative(board, player, pending, turn_count, white_turns, config,
         if mask[book_move]:
             return [(int(book_move), 0.0)], True
     cands = _candidates(board, player, pending, turn_count, white_turns,
-                        config, ROOT_K, diversity=True, prior=True)
+                        config, ROOT_K, diversity=True, prior=True,
+                        core_k=ROOT_K_CORE)
     if not cands:
         # 必守剪枝可能把候选全部剪掉(被绝杀且无防守招):此刻仍有合法着法,
         # 把全部合法着法交给迭代加深搜索——将死值带 ply 步数(见 _search),
@@ -1378,25 +1650,41 @@ def _root_iterative(board, player, pending, turn_count, white_turns, config,
         if not legal_all.size:
             return [], False
         cands = [(0.0, int(m)) for m in legal_all]
-    # 预留"防守 VCF"预算:主搜索提前 dvcf 秒收手,校验对手是否有强制杀,
-    # 总用时仍受 time_budget 约束(见 _filter_defensive_kills)
-    dvcf = (_defensive_vcf_slice(time_budget)
-            if turn_count >= config.loss_start_turns else 0.0)
-    search_budget = time_budget
-    if time_budget and dvcf > 0:
-        search_budget = max(0.02, time_budget - dvcf)
-    ctx = _SearchCtx(tt if tt is not None else _TT(),
-                     time.perf_counter() + search_budget if search_budget
-                     else None)
+    # 预留"防守 VCF"预算:主搜索提前 dvcf 秒收手,校验对手是否有强制杀。
+    # 自适应(见 _defense_reserve_needed):无战术材料时只留小预算,回收时钟
+    # 给搜索加深;总墙钟从 time_start(本步起点)起算,≤ time_budget。
+    if turn_count >= config.loss_start_turns:
+        dvcf = _defensive_vcf_slice(time_budget)
+        if time_budget and not _defense_reserve_needed(
+                board, player, pending, turn_count, white_turns, config):
+            dvcf = min(dvcf, 0.1)
+    else:
+        dvcf = 0.0
+    t0 = time_start if time_start is not None else time.perf_counter()
+    search_deadline = None
+    if time_budget:
+        search_deadline = t0 + max(0.02, time_budget - dvcf)
+    ctx = _SearchCtx(tt if tt is not None else _TT(), search_deadline)
     ctx.cb = node_cb
+    # P0 动态加深:有时限时 depth 只是起始完成要求,预算用满前逐层加深到
+    # MAX_DYNAMIC_DEPTH;不限时时保持原语义(depth 为硬上限,完整搜索)。
+    max_depth = depth
+    if time_budget and not NO_DYNAMIC:
+        max_depth = max(depth, MAX_DYNAMIC_DEPTH)
     prev_m = None
     ranked = []
-    for d in range(1, depth + 1):
+    for d in range(1, max_depth + 1):
         depth_moves = []
         completed = True
         cands2 = cands[:]
         if prev_m is not None:
             _bring_front(cands2, prev_m)   # 上一深度最佳着法优先(排序加速)
+        # 根 α 传播 + PVS:首个根着法全窗口,其后根着法先零窗试搜(在 alpha
+        # 处),仅失败高(可能更优)才按全窗口重搜。10 个根候选全窗口时 d7≈10s,
+        # PVS 后 d7≈3s(实测),有效深度多 1-2 层;最优着法始终精确,编号靠后
+        # 的着法为不高于 alpha 的上界(排序/唯一最优不受影响)。
+        root_alpha = -1e18
+        first = True
         for _, m in cands2:
             r, c = divmod(int(m), BOARD_SIZE)
             b2, p2, pend2, tc2, wt2, loser = ReverseGomoku.apply_step(
@@ -1408,20 +1696,36 @@ def _root_iterative(board, player, pending, turn_count, white_turns, config,
             elif np.count_nonzero(b2) == PLACE_SIZE:
                 v = 0.0
             elif pend2 >= 0:
-                # 占领步后同一方继续安置,子节点视角与根一致,不取负
-                v = _search(b2, p2, pend2, tc2, wt2, config, d - 1,
-                            -1e18, 1e18, ctx, ext_budget=1, ply=2)
+                # 占领步后同一方继续安置,子节点视角与根一致,不取负;
+                # 同侧节点可用父 alpha 作下界(仅需判断是否超过 alpha)
+                if USE_ROOT_PVS and not NO_ROOT_PVS and not first:
+                    v = _search(b2, p2, pend2, tc2, wt2, config, d - 1,
+                                root_alpha, 1e18, ctx, ext_budget=1, ply=2)
+                else:
+                    v = _search(b2, p2, pend2, tc2, wt2, config, d - 1,
+                                -1e18, 1e18, ctx, ext_budget=1, ply=2)
             elif _jump_through(b2, pending // BOARD_SIZE if pending >= 0 else r,
                                pending % BOARD_SIZE if pending >= 0 else c,
                                player) >= 4 \
                     and _loses_to_kill(b2, player, wt2, tc2, config):
                 v = -(WIN - 3)             # 走完留可杀四:对手下回合两步杀
+            elif USE_ROOT_PVS and not NO_ROOT_PVS and not first:
+                v = -_search(b2, p2, pend2, tc2, wt2, config, d - 1,
+                             -root_alpha - PVS_EPS, -root_alpha, ctx,
+                             ext_budget=1, ply=2, opp_last=int(m))
+                if v > root_alpha:
+                    v = -_search(b2, p2, pend2, tc2, wt2, config, d - 1,
+                                 -1e18, 1e18, ctx, ext_budget=1, ply=2,
+                                 opp_last=int(m))
             else:
                 v = -_search(b2, p2, pend2, tc2, wt2, config, d - 1,
                              -1e18, 1e18, ctx, ext_budget=1, ply=2,
                              opp_last=int(m))
+            first = False
             if noise > 0.0:
                 v += rng.uniform(0.0, noise)
+            if v > root_alpha:
+                root_alpha = v
             depth_moves.append((int(m), v))
             if node_cb is not None:
                 node_cb(ctx.nodes)
@@ -1444,8 +1748,14 @@ def _root_iterative(board, player, pending, turn_count, white_turns, config,
     if not ranked:
         ranked = [(int(cands[0][1]), 0.0)]  # 兜底:静态分最高(仅极端超时)
     if dvcf > 0:
-        ranked = _filter_defensive_kills(ranked, board, player, pending,
-                                         turn_count, white_turns, config, dvcf)
+        # 有时限:用本步剩余墙钟(搜索提前收手时余量全部归防守校验);
+        # 无对局限时:不受墙钟约束(结果确定性),由节点上限兜底
+        remaining = None
+        if time_budget:
+            remaining = max(0.0, t0 + time_budget - time.perf_counter())
+        ranked = _filter_defensive_kills(
+            ranked, board, player, pending, turn_count, white_turns, config,
+            remaining)
     return ranked, True
 
 
@@ -1465,9 +1775,11 @@ def choose_heuristic_move(board, player, pending, turn_count, white_turns,
     先验:存在一步/两步杀直接走(精确必胜,免搜索);
     否则迭代加深:从深度 1 逐层加深,time_budget(秒)内完成多少算多少,
     超时采用上一完整深度选出的着法;上一深度最佳着法在下一深度优先搜索。
+    有时限时 depth 不再是硬上限(动态加深到 MAX_DYNAMIC_DEPTH 层)。
     被绝杀无防守招时,以全部合法着法为候选搜索"手数最长的必败招",
     挣扎到最后一手再被绝杀,对局自然终局(不提前认输)。"""
     ensure_params()
+    t_start = time.perf_counter()        # 本步计时起点(含进攻 VCF)
     if depth is None:
         depth = DEFAULT_DEPTH
     opp = _other(player)
@@ -1483,10 +1795,15 @@ def choose_heuristic_move(board, player, pending, turn_count, white_turns,
     if threat_search.USE_VCF if use_vcf is None else use_vcf:
         vcf_slice = _vcf_slice(time_budget)
         if vcf_slice > 0:
+            # 无对局限时时不用墙钟 deadline(避免时间抖动导致 choose 与
+            # analysis 结果不一致),改由节点上限保证确定性上界。
+            vcf_deadline = (t_start + vcf_slice) if time_budget else None
             mv = threat_search.find_forced_kill(
                 board, player, pending, turn_count, white_turns, config,
-                max_depth=threat_search.VCF_MAX_DEPTH,
-                deadline=time.perf_counter() + vcf_slice,
+                max_depth=VCF_MAX_DEPTH_HELL,
+                deadline=vcf_deadline,
+                node_cap=VCF_NODE_CAP_HELL if time_budget
+                else VCF_NODE_CAP_UNLIMITED,
                 progress_cb=progress_cb)
             if mv is not None:
                 return int(mv)
@@ -1495,7 +1812,7 @@ def choose_heuristic_move(board, player, pending, turn_count, white_turns,
     ranked, ok = _root_iterative(board, player, pending, turn_count,
                                  white_turns, config, rng, depth, time_budget,
                                  ROOT_K, node_cb=progress_cb, tt=tt,
-                                 noise=O_NOISE)
+                                 noise=O_NOISE, time_start=t_start)
     if not ok or not ranked:
         return None
     return int(ranked[0][0])
@@ -1521,6 +1838,7 @@ def analysis_moves(board, player, pending, turn_count, white_turns, config, rng,
     (GUI 流式刷新选点)。价值尺度与对弈一致:位置价值约 ±几,必杀/必败为 ±WIN;
     终局局面按实际胜负返回(胜者 +WIN / 败者 -WIN)。"""
     ensure_params()
+    t_start = time.perf_counter()
     winner = _terminal_winner(board)
     if winner is not None:
         # 终局:不再搜索,按实际胜负给出价值;仍回发一个有效着法,
@@ -1552,10 +1870,13 @@ def analysis_moves(board, player, pending, turn_count, white_turns, config, rng,
     if threat_search.USE_VCF if use_vcf is None else use_vcf:
         vcf_slice = _vcf_slice(time_budget)
         if vcf_slice > 0:
+            vcf_deadline = (t_start + vcf_slice) if time_budget else None
             mv = threat_search.find_forced_kill(
                 board, player, pending, turn_count, white_turns, config,
-                max_depth=threat_search.VCF_MAX_DEPTH,
-                deadline=time.perf_counter() + vcf_slice)
+                max_depth=VCF_MAX_DEPTH_HELL,
+                deadline=vcf_deadline,
+                node_cap=VCF_NODE_CAP_HELL if time_budget
+                else VCF_NODE_CAP_UNLIMITED)
             if mv is not None:
                 moves = [(int(mv), WIN - 1)]
                 if progress_cb:
@@ -1563,7 +1884,8 @@ def analysis_moves(board, player, pending, turn_count, white_turns, config, rng,
                 return (moves[0][1], moves[:k])
     ranked, ok = _root_iterative(board, player, pending, turn_count,
                                  white_turns, config, rng, depth, time_budget,
-                                 k, report_cb=progress_cb, tt=tt)
+                                 k, report_cb=progress_cb, tt=tt,
+                                 time_start=t_start)
     if not ok or not ranked:
         return (0.0, [])
     return (ranked[0][1], ranked[:k])
