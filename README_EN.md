@@ -286,9 +286,10 @@ Defaults and common switches:
   0.6s), `ANTIFIVE_NO_BOOK=1` (disable the opening book), `ANTIFIVE_VALUE_W`
   (distilled value weight, default 0.5), `ANTIFIVE_PRIOR_W` (policy prior,
   default 0 = off), `ANTIFIVE_NO_DISTILL=1` (disable distillation),
-  `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters; Hell shares
-  `data/params.json` by default and prefers `data/params_hell.json` if present,
-  keeping the frozen tiers untouched), Hell switches
+  `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters; the tuned set
+  ships inside the package as `antifive/params.json`, so the web/Pyodide build
+  and clean installs get it too; a desktop `data/params.json` (param_tune
+  output) or `data/params_hell.json` (Hell-only) overrides it), Hell switches
   `ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1` (P1/P2, off by default),
   `ANTIFIVE_NO_DYNAMIC=1`, `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME` (deep VCF,
   default d12 / 240k nodes / ≤1.8 s). Distillation training pipeline

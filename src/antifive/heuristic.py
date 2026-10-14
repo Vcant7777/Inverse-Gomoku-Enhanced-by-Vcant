@@ -13,7 +13,7 @@ v6(2026-10-13,防守强化;「高级」已冻结为 tools/heuristic_v6.py):
   收集射线封堵格补入根候选;严格等时对拍净负(根候选变多、搜索变浅);
 - P2 潜伏威胁评估(ANTIFIVE_GIFT3=1 启用,默认关闭):E_SELF_GIFT3(己方
   三连"可被投送成四"专项负债);严格等时对拍净负;参数隔离机制保留
-  (data/params_hell.json 优先,缺失回退 params.json);
+  (data/params_hell.json 优先,缺失回退包内 antifive/params.json);
 - P3 复核返工:多回合"以攻代守"在杀对已成立时不成立(不封堵则进攻方下一
   回合立即完成杀),仅有"立刻反杀"是逃生(原 has_kill 检查已覆盖);不引入
   不成立的放宽,补回归测试锁定该语义(见 test_threat_search.py);
@@ -55,7 +55,8 @@ ANTIFIVE_VCF=0 可关闭),证明"无论对手如何防守都会在有限步内�
 的强制胜;找不到或超时自动回退常规搜索。
 
 v3 优化(相对 tools/heuristic_v2.py 冻结快照):
-- 调优参数运行时加载(data/params.json,ANTIFIVE_NO_PARAMS=1 可关闭;
+- 调优参数运行时加载(包内 antifive/params.json 随 wheel 分发;桌面
+  data/params.json 可覆盖;ANTIFIVE_NO_PARAMS=1 可关闭;
   置换表大小可用 ANTIFIVE_TT_BITS 调整,网页/低内存环境可用 19-20);
 - 节点级双色线图/位置摘要缓存、kill_captures 无威胁早退、kill_placements
   复用合法掩码;节点/秒约 +25%,深度 6 节点数约 -25%;
@@ -259,11 +260,12 @@ def _inner_k(depth: int) -> int:
         return 4
     return INNER_K
 
-# ---- 调优参数运行时加载(data/params.json) ----
+# ---- 调优参数运行时加载(包内 antifive/params.json,随 wheel 分发) ----
 # 白名单:E_*/O_* 数值常量与 ROOT_K/INNER_K(与 tools/param_tune.py 的
 # _PARAM_RANGES 对应)。加载只覆盖这些键,防止外部文件篡改搜索常量。
-# 地狱档参数隔离:data/params_hell.json 存在时优先(缺失回退 params.json),
-# 避免调参影响冻结的初级/中级/高级档。
+# 桌面覆盖:data/params_hell.json(地狱档)优先,其次 data/params.json;
+# 都缺失时回退包内文件——网页(Pyodide)没有仓库 data/ 目录,靠包内文件
+# 才能吃到调优参数(此前静默回退内置常量的缺口已修)。
 _PARAM_NAMES = frozenset(
     k for k, v in list(globals().items())
     if (k.startswith("E_") or k.startswith("O_"))
@@ -274,17 +276,34 @@ _PARAMS_LOCK = threading.Lock()
 _PARAMS_LOADED = False
 
 
+def package_params_path() -> Path:
+    """随包分发的调优参数文件(antifive/params.json)。
+
+    桌面仓库/安装包外的 data/params.json 缺失时回退到它;网页(Pyodide)
+    只加载 wheel 内资源,必须靠这个文件才能吃到调优参数。"""
+    return Path(__file__).resolve().with_name("params.json")
+
+
 def _default_params_path() -> Path:
-    """地狱档默认参数文件:params_hell.json 优先,缺失/开关关闭回退 params.json。"""
-    p = data_dir() / "params_hell.json"
-    if NO_HELL_PARAMS or not p.exists():
-        return data_dir() / "params.json"
-    return p
+    """地狱档默认参数文件解析(按优先级):
+
+    1. `data/params_hell.json`(桌面地狱档覆盖,可 ANTIFIVE_NO_HELL_PARAMS 关闭);
+    2. `data/params.json`(桌面覆盖,param_tune 输出);
+    3. 包内 `antifive/params.json`(随 wheel 分发;网页/Pyodide 与纯净安装)。"""
+    if not NO_HELL_PARAMS:
+        p = data_dir() / "params_hell.json"
+        if p.exists():
+            return p
+    p = data_dir() / "params.json"
+    if p.exists():
+        return p
+    return package_params_path()
 
 
 def load_params(path: str | os.PathLike | None = None,
                 force: bool = False) -> dict:
-    """从 data/params_hell.json(缺失回退 params.json)读取调优参数并应用。
+    """读取调优参数并应用(path=None 时按 _default_params_path 解析:
+    data/params_hell.json → data/params.json → 包内 antifive/params.json)。
 
     返回实际应用的 {键: 值};文件缺失/非法时返回空 dict。线程安全,
     force=False 时进程内只加载一次(配合 ensure_params 懒加载)。"""

@@ -137,7 +137,7 @@ _PARAMS_LOADED = False
 
 def load_params(path: str | os.PathLike | None = None,
                 force: bool = False) -> dict:
-    """从 data/params.json 读取调优参数并应用(白名单键)。
+    """从 data/params.json(缺失回退包内 antifive/params.json)读取调优参数。
 
     返回实际应用的 {键: 值};文件缺失/非法时返回空 dict。线程安全,
     force=False 时进程内只加载一次(配合 ensure_params 懒加载)。"""
@@ -146,7 +146,12 @@ def load_params(path: str | os.PathLike | None = None,
         if _PARAMS_LOADED and not force:
             return {}
         _PARAMS_LOADED = True
-        p = Path(path) if path is not None else (data_dir() / "params.json")
+        if path is not None:
+            p = Path(path)
+        else:
+            p = data_dir() / "params.json"
+            if not p.exists():           # 网页(Pyodide)/纯净安装:回退包内参数
+                p = Path(__file__).resolve().parents[1] / "params.json"
         try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)

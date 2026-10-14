@@ -316,8 +316,10 @@ Elo(以初级为 1000 基准,相对值而非绝对棋力;档间差距随时限�
   `ANTIFIVE_VCF_BUDGET` 0.05s,限时按剩余预算 5% 放宽、上限 0.6s)、
   `ANTIFIVE_NO_BOOK=1`(关开局库)、`ANTIFIVE_VALUE_W`(蒸馏价值权重,默认 0.5)、
   `ANTIFIVE_PRIOR_W`(策略先验,默认 0=关)、`ANTIFIVE_NO_DISTILL=1`(关蒸馏)、
-  `ANTIFIVE_NO_PARAMS=1`(不加载调优参数;地狱档默认与高级共用
-  `data/params.json`,若存在 `data/params_hell.json` 则优先,做参数隔离)、
+  `ANTIFIVE_NO_PARAMS=1`(不加载调优参数;调优参数内置在包内
+  `antifive/params.json`,随 wheel 分发——网页/Pyodide 与纯净安装都生效;
+  桌面可放 `data/params.json`(param_tune 输出)或 `data/params_hell.json`
+  覆盖,后者仅地狱档优先读取,做参数隔离)、
   地狱档开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
   `ANTIFIVE_NO_DYNAMIC=1`(关时限动态加深)、`ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME`
   (深化 VCF,默认 d12/24 万节点/≤1.8s)。蒸馏训练管线见
@@ -377,7 +379,7 @@ Inverse-Gomoku-GUI-vs-AI/
 ├── web/                        # 网页版(Vite + TypeScript + Canvas + Pyodide)
 ├── scripts/setup_env.py        # 环境自检与依赖自动安装(GPU/CPU 自适应)
 ├── config/                     # engines.json 与 gtp_test.cfg
-├── data/                       # 启发式参数、调参/评估局面池、示例棋谱
+├── data/                       # 调参/评估局面池、示例棋谱(调优参数覆盖可放此)
 ├── models/                     # 权重(说明见 models/README.md)
 ├── docs/                       # 规则、棋谱格式、引擎、训练记录
 ├── tests/                      # pytest 回归测试

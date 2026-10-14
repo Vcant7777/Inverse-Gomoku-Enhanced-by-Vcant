@@ -244,6 +244,30 @@ def test_load_params_whitelist(tmp_path):
     assert h.load_params(tmp_path / "missing.json", force=True) == {}
 
 
+def test_package_params_bundled_and_fallback(tmp_path, monkeypatch):
+    """网页(Pyodide)修复:调优参数随 wheel 分发(antifive/params.json);
+    仓库 data/ 缺失(或网页无 data 目录)时 load_params 回退包内文件并生效,
+    冻结快照 v6(网页「高级」)同样回退。"""
+    from pathlib import Path
+
+    import antifive
+    import antifive.heuristic as h
+    from antifive.tools import heuristic_v6
+
+    pkg = Path(antifive.__file__).resolve().parent / "params.json"
+    assert pkg.is_file()
+    monkeypatch.setattr(h, "data_dir", lambda: tmp_path / "missing")
+    assert h._default_params_path() == pkg
+    applied = h.load_params(force=True)
+    assert applied.get("E_SELF_OPEN3") == pytest.approx(0.2)
+    monkeypatch.setattr(heuristic_v6, "data_dir", lambda: tmp_path / "missing")
+    applied6 = heuristic_v6.load_params(force=True)
+    assert applied6.get("E_SELF_OPEN3") == pytest.approx(0.2)
+    # 收尾:恢复默认路径加载(桌面仓库已无 data/params.json,读包内文件)
+    h.load_params(force=True)
+    heuristic_v6.load_params(force=True)
+
+
 # ------------------------------------------------- v5.3 剪枝加固回归
 def test_last_move_capture_forced_into_window():
     """保送槽:对手最近落子应被强制纳入候选(小窗口 k=1 也不被剪掉)。"""

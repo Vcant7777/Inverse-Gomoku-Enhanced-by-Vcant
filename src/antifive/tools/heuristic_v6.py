@@ -3,7 +3,8 @@
 本文件是 4334dea 时点 `antifive.heuristic` 的完整快照(搜索一致性修复 + VCF
 v5.1 深杀 + 开局库 + 防守 VCF + v5.3 两处修复 + KataGo 蒸馏价值校正),作为
 GUI/网页「高级」引擎与等时对拍基线。此后对防守能力(P0-P3)的增强只发生在
-`antifive.heuristic`(「地狱」引擎),本快照行为保持不变(仅共享 data/params.json)。
+`antifive.heuristic`(「地狱」引擎),本快照行为保持不变(共享调优参数:
+包内 antifive/params.json,桌面 data/params.json 可覆盖)。
 
 v5.3(2026-10-10,step30 复盘归因的两处低风险修复):
 - "上一手吃子"保送槽:搜索递归携带 opp_last,应招节点强制保留"占领对手
@@ -181,7 +182,7 @@ _PARAMS_LOADED = False
 
 def load_params(path: str | os.PathLike | None = None,
                 force: bool = False) -> dict:
-    """从 data/params.json 读取调优参数并应用(白名单键)。
+    """从 data/params.json(缺失回退包内 antifive/params.json)读取调优参数。
 
     返回实际应用的 {键: 值};文件缺失/非法时返回空 dict。线程安全,
     force=False 时进程内只加载一次(配合 ensure_params 懒加载)。"""
@@ -190,7 +191,12 @@ def load_params(path: str | os.PathLike | None = None,
         if _PARAMS_LOADED and not force:
             return {}
         _PARAMS_LOADED = True
-        p = Path(path) if path is not None else (data_dir() / "params.json")
+        if path is not None:
+            p = Path(path)
+        else:
+            p = data_dir() / "params.json"
+            if not p.exists():           # 网页(Pyodide)/纯净安装:回退包内参数
+                p = Path(__file__).resolve().parents[1] / "params.json"
         try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)

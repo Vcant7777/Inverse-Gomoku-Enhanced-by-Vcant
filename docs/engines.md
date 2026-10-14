@@ -37,15 +37,18 @@ python -m antifive.gui --model models/best_model.pth
 网页与桌面都在「引擎版本」单选里选择;网页「AI 难度」仍为三档
 (简单/中等/困难 = 深度 2/4/8),不放地狱档,避免同一入口重复且互相覆盖
 (选地狱难度会静默忽略版本单选)。网页/桌面默认仍为困难/高级,不默认地狱。
-地狱档默认与高级共用 `data/params.json`;若存在
-`data/params_hell.json` 则优先读取(参数隔离机制保留,默认不提供该文件)。
+调优参数内置在包内 `antifive/params.json`,随 wheel 分发(网页/Pyodide 与
+纯净安装都生效,此前网页端因无仓库 `data/` 目录而静默回退内置常量的问题已修);
+桌面可在 `data/params.json`(param_tune 输出)或 `data/params_hell.json`
+(仅地狱档优先)放覆盖文件。
 A/B 开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
 `ANTIFIVE_NO_DYNAMIC=1`、`ANTIFIVE_NO_LMR=1`、`ANTIFIVE_NO_ROOT_PVS=1`
 (实验特性)、VCF 参数 `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME`。
 
 命令行行为 `--engine heuristic --heuristic-depth N --limit none|ai --ai-time S
 --heuristic-version beginner|mid|advanced|hell --no-vcf`(兼容旧值 old/new)。
-参数可被 `data/params.json` 复现,调优工具见 `src/antifive/tools/param_tune.py`。
+参数内置 `antifive/params.json`(随包分发),桌面覆盖文件由
+`src/antifive/tools/param_tune.py` 调优输出(默认 `data/params.json`)。
 
 ### 四档等时对拍(12s/步 × 96 局/对,seed 0,严格时限)
 
@@ -210,7 +213,7 @@ KataGo 的训练程序与依赖也不在开源范围内(本仓库只含运行配
 
 2026-10-11~12,RTX 5070 Laptop;KataGo v1.12.3(CUDA 编译)+ 权重
 `antifive15-20260821-083223.bin`;高级启发式 = VCF + 开局库 + 蒸馏价值校正 +
-`data/params.json`,深度 8;双方每步 12 秒墙钟,48 个配对开局黑白互换,
+调优参数,深度 8;双方每步 12 秒墙钟,48 个配对开局黑白互换,
 数据在 `records/stage2_12s/`(不入库):
 
 | 指标 | 结果 |

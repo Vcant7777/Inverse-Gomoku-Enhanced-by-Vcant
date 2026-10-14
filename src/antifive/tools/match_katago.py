@@ -1,7 +1,7 @@
 """KataGo(等时)vs 启发式 AI 对拍:配对开局、可断点续跑、带置信区间
 
 用途:按"配对开局 + 黑白互换"的规程,让启发式引擎(默认高级:VCF + 开局库 +
-KataGo 蒸馏价值校正 + data/params.json 调优参数,深度 8)与 KataGo(GTP,
+KataGo 蒸馏价值校正 + 调优参数,深度 8)与 KataGo(GTP,
 默认最新自训练权重)在相同每步墙钟时限下对弈,输出棋力对比统计与逐局记录。
 
 默认口径:
@@ -181,6 +181,19 @@ def _kata_defaults() -> dict:
     return found
 
 
+def _effective_params_file(version: str) -> str:
+    """实际生效的调优参数文件:桌面覆盖优先,缺失回退包内
+    `antifive/params.json`(随 wheel 分发,网页/Pyodide 也生效)。"""
+    from ..heuristic import package_params_path
+    v = normalize(version)
+    if v == "hell":
+        p = data_dir() / "params_hell.json"
+        if p.exists():
+            return str(p)
+    p = data_dir() / "params.json"
+    return str(p) if p.exists() else str(package_params_path())
+
+
 def _heuristic_status(version: str, use_vcf: bool, depth: int,
                       budget: float) -> dict:
     from .. import distill, openbook, threat_search
@@ -197,7 +210,7 @@ def _heuristic_status(version: str, use_vcf: bool, depth: int,
         "distill_enabled": bool(distill.ENABLED),
         "distill_value_w": float(getattr(distill, "VALUE_W", 0.0) or 0.0),
         "distill_prior_w": float(getattr(distill, "PRIOR_W", 0.0) or 0.0),
-        "params_file": str(data_dir() / "params.json"),
+        "params_file": _effective_params_file(version),
         "env_overrides": {k: os.environ[k] for k in _ENV_KEYS if k in os.environ},
     }
 

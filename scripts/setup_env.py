@@ -40,7 +40,7 @@ REQUIRED_FILES = (
     "src/antifive/__init__.py",
     "config/engines.json",
     "config/gtp_test.cfg",
-    "data/params.json",
+    "src/antifive/params.json",
 )
 OPTIONAL_FILES = (
     "data/eval_pool.npz",

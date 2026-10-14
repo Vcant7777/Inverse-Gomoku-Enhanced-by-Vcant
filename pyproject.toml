@@ -48,5 +48,10 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# 包内调优参数随 wheel 分发:Pyodide(网页)只加载 wheel 内资源,
+# 没有仓库 data/ 目录,必须靠 antifive/params.json 才能吃到调优参数。
+[tool.setuptools.package-data]
+antifive = ["params.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
