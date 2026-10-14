@@ -152,6 +152,20 @@ check(defaults.tier === 2 && defaults.limit === 15 && defaults.mode === "ai" &&
   defaults.param === "高级·VCF开 · 深度 8 层",
   "default advanced+VCF / depth 8 / 读秒 15s");
 
+const tiers = await page.evaluate(() => {
+  const radios = Array.from(document.querySelectorAll('input[name="tier"]'));
+  return {
+    count: radios.length,
+    hasHell: radios.some((r) => (r.closest("label")?.textContent ?? "").includes("地狱")),
+    checked: radios.findIndex((r) => r.checked),
+  };
+});
+check(tiers.count === 4 && tiers.hasHell && tiers.checked === 2,
+  "four difficulty tiers incl. 地狱, default 困难");
+const versions = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('input[name="hver"]')).map((r) => r.value));
+check(versions.includes("hell"), "engine version list includes hell");
+
 await page.keyboard.press("e");
 await page.click('input[name="limit"][value="ai"]');
 await page.$eval("#limit-seconds", (el) => {

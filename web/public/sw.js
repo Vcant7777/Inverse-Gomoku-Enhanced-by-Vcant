@@ -41,7 +41,9 @@ async function networkFirst(request) {
 // GitHub Pages 无法自定义响应头:由 SW 给文档响应补 COOP/COEP,
 // 启用跨源隔离(SharedArrayBuffer),使 Pyodide 可被中断(悔棋即时生效)。
 async function withIsolationHeaders(request, extra) {
-  const response = await fetch(request);
+  // 文档与 Worker 脚本一律绕过 HTTP 缓存:GitHub Pages 对 HTML 有 max-age,
+  // 否则新部署后用户可能长时间看到旧页面(例如看不到新增的难度档)。
+  const response = await fetch(request, { cache: "no-store" });
   const headers = new Headers(response.headers);
   headers.set("Cross-Origin-Opener-Policy", "same-origin");
   headers.set("Cross-Origin-Embedder-Policy", "require-corp");
