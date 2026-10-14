@@ -8,14 +8,14 @@ import type { AiResult, GameState } from "./types";
 interface Tier {
   name: string;
   depth: number;
-  engine?: "hell";        // 指定则强制使用该引擎(地狱档 = 困难之上的防守强化引擎)
 }
 
+// AI 难度 = 搜索深度(三档);「地狱」是引擎版本(见 hver 单选),不放在难度里,
+// 避免同一入口重复且互相覆盖(选地狱难度会静默忽略版本单选)。
 const TIERS: Tier[] = [
   { name: "简单", depth: 2 },
   { name: "中等", depth: 4 },
   { name: "困难", depth: 8 },
-  { name: "地狱", depth: 8, engine: "hell" },
 ];
 
 // 「不限时」下 AI 的兜底上限(秒):防浏览器端完整深度搜索卡死(Pyodide 无抢占);
@@ -264,8 +264,7 @@ export class App {
       input.name = "tier";
       input.value = String(i);
       input.checked = i === this.tier;
-      const note = tier.engine ? "(困难之上)" : `(深度 ${tier.depth})`;
-      label.append(input, document.createTextNode(`${tier.name}${note}`));
+      label.append(input, document.createTextNode(`${tier.name}(深度 ${tier.depth})`));
       tierRadios.appendChild(label);
     });
     const hverRadios = $("hver-radios");
@@ -510,7 +509,7 @@ export class App {
     try {
       const res = await this.engine.call<AiResult>(
         "ai",
-        { depth: tier.depth, budget, engine: this.effectiveEngine(), vcf: this.effectiveVcf() },
+        { depth: tier.depth, budget, engine: this.hver, vcf: this.hvcf },
         Math.round((budget + 120) * 1000),
       );
       if (epoch !== this.epoch) return;
@@ -1149,18 +1148,9 @@ export class App {
     return v === "beginner" || v === "mid" || v === "hell" ? v : "advanced";
   }
 
-  private effectiveEngine(): "beginner" | "mid" | "advanced" | "hell" {
-    return TIERS[this.tier].engine ?? this.hver;
-  }
-
-  private effectiveVcf(): boolean {
-    return TIERS[this.tier].engine ? true : this.hvcf;
-  }
-
   private versionText(): string {
-    const engine = this.effectiveEngine();
-    if (engine === "beginner") return "初级";
-    return `${VERSION_LABELS[engine]}·${this.effectiveVcf() ? "VCF开" : "VCF关"}`;
+    if (this.hver === "beginner") return "初级";
+    return `${VERSION_LABELS[this.hver]}·${this.hvcf ? "VCF开" : "VCF关"}`;
   }
 
   private syncVcfEnabled(): void {

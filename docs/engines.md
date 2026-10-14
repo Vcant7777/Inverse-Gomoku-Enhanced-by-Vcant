@@ -31,10 +31,13 @@ python -m antifive.gui --model models/best_model.pth
 | 初级 | `tools/heuristic_v2.py` 冻结经典版 | 老算法,无 VCF/开局库/蒸馏 |
 | 中级 | `tools/heuristic_v5.py` 冻结快照 | 搜索一致性修复 + VCF v5.1 + 开局库 + 防守 VCF |
 | 高级(默认) | `tools/heuristic_v6.py` 冻结快照 | 中级 + KataGo 蒸馏价值校正(旧 `antifive.heuristic` 行为) |
-| 地狱 | `antifive.heuristic` | 高级 + 防守强化:深化 VCF(d12/24 万节点/≤1.8s)、P1 预防性防守候选、P0 防守校验全候选与预算对等 + 时限动态加深、P2 潜伏威胁评估 |
+| 地狱 | `antifive.heuristic` | 高级 + 防守强化:深化 VCF(d12/24 万节点/≤1.8s)、严格时限预算管理与自适应防守预留、防守校验全候选 + 时限动态加深 |
 
-网页端难度第 4 档「地狱」= 深度 8 + 强制地狱引擎(困难之上);网页/桌面默认
-仍为困难/高级,不默认地狱。地狱档默认与高级共用 `data/params.json`;若存在
+「地狱」是**引擎版本**(困难/高级之上的强度档,可与任意搜索深度搭配),
+网页与桌面都在「引擎版本」单选里选择;网页「AI 难度」仍为三档
+(简单/中等/困难 = 深度 2/4/8),不放地狱档,避免同一入口重复且互相覆盖
+(选地狱难度会静默忽略版本单选)。网页/桌面默认仍为困难/高级,不默认地狱。
+地狱档默认与高级共用 `data/params.json`;若存在
 `data/params_hell.json` 则优先读取(参数隔离机制保留,默认不提供该文件)。
 A/B 开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
 `ANTIFIVE_NO_DYNAMIC=1`、`ANTIFIVE_NO_LMR=1`、`ANTIFIVE_NO_ROOT_PVS=1`

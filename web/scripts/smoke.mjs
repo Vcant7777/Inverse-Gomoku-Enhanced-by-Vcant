@@ -156,12 +156,13 @@ const tiers = await page.evaluate(() => {
   const radios = Array.from(document.querySelectorAll('input[name="tier"]'));
   return {
     count: radios.length,
-    hasHell: radios.some((r) => (r.closest("label")?.textContent ?? "").includes("地狱")),
+    labels: radios.map((r) => r.closest("label")?.textContent ?? ""),
     checked: radios.findIndex((r) => r.checked),
   };
 });
-check(tiers.count === 4 && tiers.hasHell && tiers.checked === 2,
-  "four difficulty tiers incl. 地狱, default 困难");
+check(tiers.count === 3 && tiers.checked === 2 &&
+  tiers.labels.every((t) => !t.includes("地狱")),
+  "three difficulty tiers (no 地狱), default 困难");
 const versions = await page.evaluate(() =>
   Array.from(document.querySelectorAll('input[name="hver"]')).map((r) => r.value));
 check(versions.includes("hell"), "engine version list includes hell");

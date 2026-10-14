@@ -73,17 +73,17 @@ Play in the browser, no installation:
   Web Worker; the front end is a static TypeScript + Canvas site hosted on
   GitHub Pages.
 - The first visit downloads the runtime (about 10-20 MB); later visits are served
-  from a Service Worker cache. Four difficulty tiers map to heuristic depths
-  2 / 4 / 8 / 8, defaulting to "Hard" (depth 8). The fourth tier "Hell" (above
-  Hard) forces the defense-hardened engine (depth 8 + clock-driven deepening).
-  The default limit mode is "AI clock" at 15 seconds per move (customizable);
-  "no clock" performs a full-depth search, with a 180s/move safety cap in the
-  browser (the desktop build has no cap).
+  from a Service Worker cache. Three difficulty tiers map to heuristic depths
+  2 / 4 / 8, defaulting to "Hard" (depth 8). The default limit mode is "AI clock"
+  at 15 seconds per move (customizable); "no clock" performs a full-depth search,
+  with a 180s/move safety cap in the browser (the desktop build has no cap).
 - The settings dialog offers an **engine version** switch (Beginner classic /
-  Mid enhanced / Advanced + distillation / Hell defense-hardened) and a
-  **VCF forced-kill-chain** toggle (Mid/Advanced/Hell); the default is
-  Advanced + VCF on. Equal-time round-robin: Advanced beats Mid 82%, Mid beats
-  Beginner 88%, Advanced beats Beginner 98% (96 games each; Hell's Elo below).
+  Mid enhanced / Advanced + distillation / Hell defense-hardened, default
+  Advanced) and a **VCF forced-kill-chain** toggle (Mid/Advanced/Hell). "Hell"
+  is an engine version (the strength tier above Advanced, combinable with any
+  search depth), not a difficulty entry, so there is no duplicated/overriding
+  control. Equal-time round-robin: Advanced beats Mid 82%, Mid beats Beginner
+  88%, Advanced beats Beginner 98% (96 games each; Hell's Elo below).
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay
