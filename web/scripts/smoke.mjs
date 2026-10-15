@@ -190,6 +190,24 @@ const applied = await page.evaluate(() => ({
 check(applied.ver === "advanced" && applied.vcf === false &&
   applied.param.includes("VCF关"), "version/vcf applied");
 
+// 禁手设置:0=白棋无禁推,新局按设定生效;改回默认 2
+await page.keyboard.press("e");
+await page.$eval("#restrict-turns", (el) => {
+  el.value = "0";
+});
+await page.click("#settings-apply");
+await page.evaluate(() => window.__antifive.newGame());
+await wait(() => window.__antifive.state?.config?.white_restrict_turns === 0, 15000, 100);
+check(true, "white restrict 0 applied to new game");
+await page.keyboard.press("e");
+await page.$eval("#restrict-turns", (el) => {
+  el.value = "2";
+});
+await page.click("#settings-apply");
+await page.evaluate(() => window.__antifive.newGame());
+await wait(() => window.__antifive.state?.config?.white_restrict_turns === 2, 15000, 100);
+check(true, "white restrict restored to 2");
+
 const box = await (await page.$("#board")).boundingBox();
 const cx = box.x + box.width / 2;
 const cy = box.y + box.height / 2;

@@ -69,6 +69,7 @@ export class App {
   private limitSeconds = 15;
   private hver: "beginner" | "mid" | "advanced" | "hell" = "advanced";
   private hvcf = true;
+  private whiteRestrict = 2;        // 白棋前 N 手禁推(0=无禁推,新局生效)
 
   private showDanger = false;
   private showNumbers = false;
@@ -309,6 +310,7 @@ export class App {
     }
     ($("limit-seconds") as HTMLInputElement).value = String(this.limitSeconds);
     ($("play-seconds") as HTMLInputElement).value = String(this.playSeconds);
+    ($("restrict-turns") as HTMLInputElement).value = String(this.whiteRestrict);
     $("settings-apply").addEventListener("click", () => this.applySettings());
     $("settings-cancel").addEventListener("click", () => this.closeSettings());
   }
@@ -470,7 +472,9 @@ export class App {
     this.disarmResign();
     this.hideOverlay();
     this.engine
-      .call<{ state: GameState }>("new", {})
+      .call<{ state: GameState }>("new", {
+        config: { white_restrict_turns: this.whiteRestrict },
+      })
       .then((res) => {
         this.state = res.state;
         this.afterStateChange();
@@ -1252,6 +1256,7 @@ export class App {
     }
     ($("limit-seconds") as HTMLInputElement).value = String(this.limitSeconds);
     ($("play-seconds") as HTMLInputElement).value = String(this.playSeconds);
+    ($("restrict-turns") as HTMLInputElement).value = String(this.whiteRestrict);
     settings.classList.remove("hidden");
   }
 
@@ -1274,8 +1279,14 @@ export class App {
     if (Number.isFinite(playSeconds)) {
       this.playSeconds = Math.round(Math.max(0.1, Math.min(10, playSeconds)) * 10) / 10;
     }
+    const restrict = Number(($("restrict-turns") as HTMLInputElement).value);
+    const restrictChanged = Number.isFinite(restrict) &&
+      Math.max(0, Math.min(4, Math.round(restrict))) !== this.whiteRestrict;
+    if (Number.isFinite(restrict)) {
+      this.whiteRestrict = Math.max(0, Math.min(4, Math.round(restrict)));
+    }
     this.closeSettings();
-    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 自动播放 ${this.playSeconds}s`);
+    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 自动播放 ${this.playSeconds}s${restrictChanged ? ` / 白棋禁推 ${this.whiteRestrict} 手(新局生效)` : ""}`);
     this.syncPanel();
     this.maybeRunAi();
   }

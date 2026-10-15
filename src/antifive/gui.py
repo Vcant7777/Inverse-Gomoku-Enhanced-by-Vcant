@@ -691,7 +691,8 @@ class _KataGoEngine:
 
     def __init__(self, engine_path: str, config_path: str, weight_path: str,
                  name: str = "KataGo", max_time: float | None = None,
-                 max_visits: int | None = None, ai_temp: float = 0.0):
+                 max_visits: int | None = None, ai_temp: float = 0.0,
+                 white_restrict_turns: int | None = None):
         self.name = name
         if not (engine_path and os.path.exists(engine_path)):
             raise ValueError(f"KataGo 可执行文件不存在: {engine_path}")
@@ -706,6 +707,9 @@ class _KataGoEngine:
         self._awaiting_analyze_move = False
         cmd = [engine_path, "gtp", "-config", config_path, "-model", weight_path]
         overrides = []
+        if white_restrict_turns is not None:
+            # 白棋禁推手数按对局规则覆盖(0=无禁推);fork 的 kata-get-rules 可回读
+            overrides.append(f"whiteRestrictTurns={int(white_restrict_turns)}")
         if max_time and max_time > 0:
             overrides.append(f"maxTime={max_time}")
         if max_visits and max_visits > 0:
@@ -1000,6 +1004,7 @@ class SettingsScreen:
         self.mcts_sims = app.mcts_sims
         self.ai_temp = app.ai_temp
         self.auto_play_interval = app.auto_play_interval
+        self.white_restrict = app.white_restrict_turns
         self.kata_weight = app.kata_cfg.get("weight", "")
         self.kata_engine = app.kata_cfg.get("engine", "")
         self.kata_config = app.kata_cfg.get("config", "")
@@ -1007,7 +1012,7 @@ class SettingsScreen:
         self.model_scroll = 0
         self.focus_box = None          # 当前聚焦的 _InputBox 或 None
         self.path_box = self.depth_box = self.time_box = self.sims_box = None
-        self.temp_box = self.play_box = None
+        self.temp_box = self.play_box = self.wr_box = None
         self.kata_weight_box = self.kata_engine_box = self.kata_config_box = None
         self._kata_weight_btn = None
         self._kata_weight_browse = self._kata_engine_browse = \
@@ -1149,11 +1154,19 @@ class SettingsScreen:
         else:
             self.temp_box.rect = self._temp_input
         y += 34 + 12
-        # 复盘自动播放速度:每手间隔秒数(0.1-10.0)
-        self._play_rect = pygame.Rect(x0, y, w, 34)
-        self._play_minus = pygame.Rect(x0 + w - 96, y, 32, 34)
-        self._play_plus = pygame.Rect(x0 + w - 34, y, 32, 34)
-        self._play_input = pygame.Rect(x0 + w - 96 - 10 - 140, y, 140, 34)
+        # 白棋禁推手数与复盘自动播放间隔:半宽并排,卡片高度不变
+        half = (w - 12) // 2
+        self._wr_rect = pygame.Rect(x0, y, half, 34)
+        self._play_rect = pygame.Rect(x0 + half + 12, y, half, 34)
+        self._wr_input, self._wr_minus, self._wr_plus = \
+            self._compact_boxes(self._wr_rect)
+        self._play_input, self._play_minus, self._play_plus = \
+            self._compact_boxes(self._play_rect)
+        if self.wr_box is None:
+            self.wr_box = _InputBox(self._wr_input, str(self.white_restrict),
+                                    mode="int")
+        else:
+            self.wr_box.rect = self._wr_input
         if self.play_box is None:
             self.play_box = _InputBox(self._play_input,
                                       f"{self.auto_play_interval:.1f}",
@@ -1161,10 +1174,18 @@ class SettingsScreen:
         else:
             self.play_box.rect = self._play_input
         y += 34 + 12
-        # 底部按钮右对齐、收窄,左侧空位放操作提示(新增播放行后仍不超高卡片)
+        # 底部按钮右对齐、收窄,左侧空位放操作提示
         bw3 = 160
         self._cancel_rect = pygame.Rect(c.right - 26 - bw3 - 10 - bw3, y, bw3, 42)
         self._confirm_rect = pygame.Rect(c.right - 26 - bw3, y, bw3, 42)
+
+    @staticmethod
+    def _compact_boxes(rect):
+        """半宽数字行的输入框/±按钮几何(输入框较全宽行收窄,供两行并排)。"""
+        plus = pygame.Rect(rect.right - 30, rect.y, 28, rect.height)
+        minus = pygame.Rect(plus.x - 8 - 28, rect.y, 28, rect.height)
+        box = pygame.Rect(minus.x - 8 - 58, rect.y, 58, rect.height)
+        return box, minus, plus
 
     # ---- 交互 ----
     def handle(self, ev):
@@ -1201,7 +1222,7 @@ class SettingsScreen:
         # 先提交并失焦当前输入框
         self._blur_box()
         for b in (self.path_box, self.depth_box, self.time_box, self.sims_box,
-                  self.temp_box, self.play_box,
+                  self.temp_box, self.play_box, self.wr_box,
                   self.kata_weight_box, self.kata_engine_box, self.kata_config_box):
             if b is not None and b.rect.collidepoint(pos):
                 b.active = True
@@ -1310,6 +1331,14 @@ class SettingsScreen:
             self.auto_play_interval = min(10.0, round(self.auto_play_interval + 0.1, 1))
             self.play_box.set_text(f"{self.auto_play_interval:.1f}")
             return None
+        if self._wr_minus.collidepoint(pos):
+            self.white_restrict = max(0, self.white_restrict - 1)
+            self.wr_box.set_text(str(self.white_restrict))
+            return None
+        if self._wr_plus.collidepoint(pos):
+            self.white_restrict = min(4, self.white_restrict + 1)
+            self.wr_box.set_text(str(self.white_restrict))
+            return None
         if self._confirm_rect.collidepoint(pos):
             return "confirm"
         if self._cancel_rect.collidepoint(pos):
@@ -1364,6 +1393,10 @@ class SettingsScreen:
             self.auto_play_interval = self._clamp_num(b.text, self.auto_play_interval,
                                                       0.1, 10.0, 1)
             b.set_text(f"{self.auto_play_interval:.1f}")
+        elif b is self.wr_box:
+            self.white_restrict = self._clamp_num(b.text, float(self.white_restrict),
+                                                  0, 4, 0)
+            b.set_text(str(self.white_restrict))
         elif b is self.path_box:
             self.model_path = b.text or None
         elif b is self.kata_weight_box:
@@ -1427,7 +1460,9 @@ class SettingsScreen:
         self._draw_numrow(screen, font_sm, "AI 温度(KataGo,0=最优)",
                           self.temp_box,
                           self._temp_rect, self._temp_minus, self._temp_plus)
-        self._draw_numrow(screen, font_sm, "复盘自动播放间隔(秒)", self.play_box,
+        self._draw_numrow(screen, font_sm, "白棋禁推手数(0=无禁手)", self.wr_box,
+                          self._wr_rect, self._wr_minus, self._wr_plus)
+        self._draw_numrow(screen, font_sm, "自动播放间隔(秒)", self.play_box,
                           self._play_rect, self._play_minus, self._play_plus)
         # 按钮
         for r, label in ((self._cancel_rect, "取消"), (self._confirm_rect, "确定")):
@@ -1552,7 +1587,9 @@ class App:
         self.font_xs = _load_font(14)
         self.board = Board()
         self.panel = Panel(self.font_sm, self.font_xs)
-        self.game = ReverseGomoku()
+        self.white_restrict_turns = GameConfig().white_restrict_turns  # 白棋前 N 手禁推(0=无),设定可改
+        self.game = ReverseGomoku(GameConfig(
+            white_restrict_turns=self.white_restrict_turns))
         self.mode = 0
         self.show_danger = False
         self.show_numbers = False        # 棋子上显示落子手数
@@ -1686,7 +1723,8 @@ class App:
             eng = _KataGoEngine(k.get("engine", ""), k.get("config", ""),
                                 k.get("weight", ""), max_time=ai_tb,
                                 max_visits=self.mcts_sims,
-                                ai_temp=self.ai_temp)
+                                ai_temp=self.ai_temp,
+                                white_restrict_turns=self.game.config.white_restrict_turns)
             self.ai_black = eng
             self.ai_white = eng          # 同一时刻仅一方在走,共用子进程
             return
@@ -1704,14 +1742,20 @@ class App:
         mcts_tb = ai_tb if ai_tb is not None else 0.0
         self.ai_black = _MCTSEngine(MCTS(net, self.device, sims=self.mcts_sims,
                                          c_puct=self.mcts_c_puct,
+                                         config=self.game.config,
                                          time_budget=mcts_tb))
         self.ai_white = _MCTSEngine(MCTS(net, self.device, sims=self.mcts_sims,
                                          c_puct=self.mcts_c_puct,
+                                         config=self.game.config,
                                          time_budget=mcts_tb))
 
     def _rebuild_engines(self, config) -> None:
-        """载入不同规则配置的棋谱后,按新配置重建引擎(启发式/KataGo 无需重建)。"""
-        if isinstance(self.ai_black, (_HeuristicEngine, _KataGoEngine)):
+        """对局规则配置变化后重建引擎,保证 AI 与规则一致(启发式每次 choose
+        直接读 game.config,无需重建;KataGo 需重启子进程并覆盖白棋禁推)。"""
+        if isinstance(self.ai_black, _HeuristicEngine):
+            return
+        if isinstance(self.ai_black, _KataGoEngine):
+            self.set_engine("kata")      # 按新 game.config 重启子进程
             return
         m = self.ai_black.mcts
         self.ai_black = _MCTSEngine(MCTS(m.network, self.device, sims=m.sims,
@@ -1734,6 +1778,13 @@ class App:
             self.mcts_sims = max(100, int(s.mcts_sims))
             self.ai_temp = max(0.0, min(2.0, float(s.ai_temp)))
             self.auto_play_interval = max(0.1, min(10.0, float(s.auto_play_interval)))
+            new_restrict = max(0, min(4, int(s.white_restrict)))
+            restrict_changed = new_restrict != self.white_restrict_turns
+            self.white_restrict_turns = new_restrict
+            if restrict_changed and not self.game.history:
+                # 空盘局(含开局后未落子)直接换上新规则,避免"设定完还要按新局"
+                self.game = ReverseGomoku(GameConfig(
+                    white_restrict_turns=self.white_restrict_turns))
             if s.kind == "heuristic":
                 self.set_engine("heuristic", depth=int(s.depth),
                                 version=s.heuristic_version,
@@ -1752,7 +1803,12 @@ class App:
                 self.set_engine("mcts", None)
             self.ai_deadline = None
             limit_txt = "仅 AI 限时读秒" if self.limit_mode == "ai" else "不限时"
-            self.set_status(f"已应用: {self.engine_desc} · 限时: {limit_txt}")
+            wr_txt = ""
+            if restrict_changed:
+                wr_txt = f" · 白棋禁推 {self.white_restrict_turns} 手"
+                if self.game.history:            # 对局中修改:下一局才生效
+                    wr_txt += "(新局生效)"
+            self.set_status(f"已应用: {self.engine_desc} · 限时: {limit_txt}{wr_txt}")
         except Exception as e:
             self.set_status(f"设定失败: {e}")
 
@@ -1847,14 +1903,15 @@ class App:
             g = ReverseGomoku(rec.config)
             for m in rec.moves:
                 g.make_move(m)
-            if rec.config != self.game.config:
-                # 规则配置不同:重建引擎,避免 AI 用错规则继续行棋
-                self._rebuild_engines(rec.config)
             if not g.game_over:              # 认输局棋盘无五连,按原谱结果补标终局
                 loser = record.resign_loser(rec.result)
                 if loser:
                     g.resign(loser)
+            prev_config = self.game.config
             self.game = g
+            if g.config != prev_config:
+                # 规则配置不同:重建引擎,避免 AI 用错规则继续行棋
+                self._rebuild_engines(g.config)
             self.epoch += 1
             self.show_result_overlay = False
             self.enter_review()
@@ -1891,7 +1948,11 @@ class App:
         self.confirm_idx = None
         self.resign_armed_until = 0.0
         self.show_result_overlay = False
-        self.game = ReverseGomoku()
+        prev_config = self.game.config
+        self.game = ReverseGomoku(GameConfig(
+            white_restrict_turns=self.white_restrict_turns))
+        if self.game.config != prev_config:
+            self._rebuild_engines(self.game.config)   # 规则变化:引擎同步新配置
 
     def undo(self):
         if self.review:
@@ -2652,7 +2713,7 @@ class App:
               "2. 落子：黑先白后，在交叉点上交替落子。",
               "3. 推子：落在对方棋子上，然后在八个方向上移动该棋子任意格，"
               "但会被其他棋子阻挡。",
-              "4. 禁手：白前两手禁止推子，禁止自杀着，禁止无路线推子。")
+              "4. 禁手：白前两手禁推(可设定，0=无禁推)，禁止自杀着，禁止无路线推子。")
 
     @staticmethod
     def _wrap_text(font, text, max_w):

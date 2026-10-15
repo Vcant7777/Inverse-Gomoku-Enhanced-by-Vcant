@@ -55,7 +55,9 @@ Inverse Gomoku is played on a 15×15 board. The standard rules:
 1. Victory: whoever first makes five stones in a row loses.
 2. Placement: Black moves first; players alternate placing stones on empty intersections.
 3. Push (relocation): land on an opponent's stone, then move that stone along one of the eight directions for any number of cells, but it is blocked by other stones.
-4. Prohibitions: White may not push during the first two turns; suicide moves are forbidden; pushing with no valid path is forbidden.
+4. Prohibitions: White may not push during the first two turns (default; the
+   white-restrict turn count is configurable in Settings, 0 = no restriction);
+   suicide moves are forbidden; pushing with no valid path is forbidden.
 
 > **Naming note**: this project uses the Chinese name 「逆五子棋」 (*Inverse
 > Gomoku*) to distinguish it from *reverse gomoku*, which has no relocation
@@ -84,6 +86,9 @@ Play in the browser, no installation:
   search depth), not a difficulty entry, so there is no duplicated/overriding
   control. Equal-time round-robin: Advanced beats Mid 82%, Mid beats Beginner
   88%, Advanced beats Beginner 98% (96 games each; Hell's Elo below).
+- Settings can also adjust the **white-restriction turn count** (balance rule:
+  White may not capture during its first N turns, default 2; 0 removes the
+  restriction; applies to the next game) and the replay **auto-play** interval.
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay
@@ -281,6 +286,10 @@ Defaults and common switches:
   `--heuristic-version/--heuristic-depth/--ai-time/--no-vcf`);
 - Web: also "Advanced + VCF on"; difficulties = depths 2/4/8, default 15s AI
   clock, "no clock" runs a full-depth search (180s/move browser cap);
+- White restriction (balance rule): default 2 turns, configurable in Settings
+  (0 = White may capture immediately; applies to the next game). The desktop GUI
+  restarts KataGo with `-override-config whiteRestrictTurns=<n>` so the engine
+  always follows the game rules (verified via `kata-get-rules`);
 - Parameters: `ANTIFIVE_TT_BITS` (transposition-table size, default 21; set
   19-20 in memory-tight environments such as the web), `ANTIFIVE_VCF=0` /
   `ANTIFIVE_VCF_DEPTH` (kill-chain toggle/depth, default 8; base budget

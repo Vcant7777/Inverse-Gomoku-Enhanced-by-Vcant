@@ -71,7 +71,7 @@
           <p>1. 胜负：先连成五子者输。</p>
           <p>2. 落子：黑先白后，在交叉点上交替落子。</p>
           <p>3. 推子：落在对方棋子上，然后在八个方向上移动该棋子任意格，但会被其他棋子阻挡。</p>
-          <p>4. 禁手：白前两手禁止推子，禁止自杀着，禁止无路线推子。</p>
+          <p>4. 禁手：白前两手禁止推子(可在设定调整，0=无禁推)，禁止自杀着，禁止无路线推子。</p>
         </div>
         <div class="credit">GUI by 硅基飙尘葆光 · 网页版基于 Pyodide</div>
       </aside>
@@ -85,7 +85,7 @@
           <p>1. 胜负：先连成五子者输。</p>
           <p>2. 落子：黑先白后，在交叉点上交替落子。</p>
           <p>3. 推子：落在对方棋子上，然后在八个方向上移动该棋子任意格，但会被其他棋子阻挡。</p>
-          <p>4. 禁手：白前两手禁止推子，禁止自杀着，禁止无路线推子。</p>
+          <p>4. 禁手：白前两手禁止推子(可在设定调整，0=无禁推)，禁止自杀着，禁止无路线推子。</p>
         </div>
         <div class="intro-section">
           <h3>玩法发明</h3>
@@ -129,6 +129,10 @@
           <label>对局限时</label>
           <div class="radios" id="limit-radios"></div>
           <label class="seconds">读秒秒数 <input id="limit-seconds" type="number" min="1" max="600" step="1" /></label>
+        </div>
+        <div class="field">
+          <label>白棋禁推(平衡规则,新局生效)</label>
+          <label class="seconds">白棋前 <input id="restrict-turns" type="number" min="0" max="4" step="1" /> 手禁止推子(0=无禁推)</label>
         </div>
         <div class="field">
           <label>复盘自动播放</label>

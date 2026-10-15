@@ -12,7 +12,9 @@
     1. **占领**:把己方棋子放到对方棋子所在格,对方棋子被拿离棋盘;
     2. **安置**:把拿起的对方棋子沿 8 个方向之一直线放到连续空位(路径不得受阻)。
 - 平衡规则:白棋前 `white_restrict_turns` 个回合不能移子(默认 2),
-  由 [hzyhhzy](https://github.com/hzyhhzy)(KataGo/KataGomo 作者)提出。
+  由 [hzyhhzy](https://github.com/hzyhhzy)(KataGo/KataGomo 作者)提出;
+  GUI/网页「设定」可调该手数(0=白棋无禁推,对下一局生效;桌面 KataGo 经
+  `-override-config whiteRestrictTurns=N` 同步,AI 与规则始终一致)。
 - 判负:连成五子的一方判负;和棋:棋盘无空位且无人连五。
 - 自杀手(走出后自己立刻连五)按规则判负;`mask_suicide=1` 时在合法掩码中剔除
   (AI 对局默认开启,避免 AI 主动自杀);引擎对局可关闭以与 C++ 原版行为一致。
