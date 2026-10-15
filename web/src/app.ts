@@ -99,6 +99,9 @@ export class App {
   private pos = 0;
   private divergence: number | null = null;
   private reviewResult = "未完";
+  private playSeconds = 1;          // 复盘自动播放每手间隔秒数(设定弹窗可调)
+  private playing = false;
+  private playTimer: number | null = null;
 
   private statusText = "";
   private statusUntil = 0;
@@ -245,6 +248,7 @@ export class App {
     const reviewDefs: [string, () => void][] = [
       ["开局", () => void this.reviewJump(0)],
       ["上一手", () => void this.reviewJump(this.pos - 1)],
+      ["自动播放", () => this.toggleAutoPlay()],
       ["下一手", () => void this.reviewJump(this.pos + 1)],
       ["终局", () => void this.reviewJump(this.variation.length)],
       ["原谱", () => this.reviewReset()],
@@ -252,6 +256,7 @@ export class App {
     for (const [label, fn] of reviewDefs) {
       const btn = document.createElement("button");
       btn.textContent = label;
+      if (label === "自动播放") btn.dataset.playToggle = "1";
       btn.addEventListener("click", fn);
       reviewButtons.appendChild(btn);
     }
@@ -303,6 +308,7 @@ export class App {
       limitRadios.appendChild(label);
     }
     ($("limit-seconds") as HTMLInputElement).value = String(this.limitSeconds);
+    ($("play-seconds") as HTMLInputElement).value = String(this.playSeconds);
     $("settings-apply").addEventListener("click", () => this.applySettings());
     $("settings-cancel").addEventListener("click", () => this.closeSettings());
   }
@@ -425,7 +431,10 @@ export class App {
       this.newGame();
     } else if (this.review && key === "arrowleft") void this.reviewJump(this.pos - 1);
     else if (this.review && key === "arrowright") void this.reviewJump(this.pos + 1);
-    else return;
+    else if (this.review && key === " " && !(event.target instanceof HTMLButtonElement)) {
+      event.preventDefault();          // 避免页面滚动;按钮聚焦时留给按钮自身
+      this.toggleAutoPlay();
+    } else return;
     this.syncPanel();
     this.needsDraw = true;
   }
@@ -451,6 +460,7 @@ export class App {
     this.nodes = 0;
     this.humanPrevState = null;
     this.review = false;
+    this.stopAutoPlay();
     this.recordMoves = [];
     this.variation = [];
     this.pos = 0;
@@ -752,6 +762,7 @@ export class App {
   private enterReview(overlay: boolean) {
     if (!this.state) return;
     this.review = true;
+    this.stopAutoPlay();
     this.recordMoves = [...this.state.moves];
     this.variation = [...this.state.moves];
     this.pos = this.variation.length;
@@ -792,7 +803,8 @@ export class App {
     }
   }
 
-  private async reviewJump(k: number) {
+  private async reviewJump(k: number, keepPlaying = false) {
+    if (!keepPlaying) this.stopAutoPlay();
     if (!this.ready || !this.state) return;
     const target = Math.max(0, Math.min(k, this.variation.length));
     if (target === this.pos && this.review) {
@@ -840,6 +852,61 @@ export class App {
     void this.reviewJump(target);
   }
 
+  private toggleAutoPlay() {
+    if (this.playing) {
+      this.stopAutoPlay();
+      this.setStatus("自动播放已暂停");
+      return;
+    }
+    if (!this.ready || !this.review || !this.variation.length) return;
+    this.playing = true;
+    this.setStatus(`自动播放中 · 每手 ${this.playSeconds} 秒`);
+    this.syncPanel();
+    this.needsDraw = true;
+    void this.startAutoPlay();
+  }
+
+  private async startAutoPlay() {
+    if (this.pos >= this.variation.length) {
+      await this.reviewJump(0, true);   // 已到末尾:从头播放
+      if (!this.playing) return;
+    }
+    this.scheduleAutoPlay();
+  }
+
+  private scheduleAutoPlay(delayMs = this.playSeconds * 1000) {
+    this.clearPlayTimer();
+    this.playTimer = window.setTimeout(() => {
+      this.playTimer = null;
+      void this.autoPlayStep();
+    }, delayMs);
+  }
+
+  private async autoPlayStep() {
+    if (!this.playing || !this.review) return;
+    if (this.pos >= this.variation.length) {
+      this.stopAutoPlay();              // 播到终局自动停
+      return;
+    }
+    await this.reviewJump(this.pos + 1, true);
+    if (this.playing && this.review) this.scheduleAutoPlay();
+  }
+
+  private stopAutoPlay() {
+    if (!this.playing && this.playTimer === null) return;
+    this.playing = false;
+    this.clearPlayTimer();
+    this.syncPanel();
+    this.needsDraw = true;
+  }
+
+  private clearPlayTimer() {
+    if (this.playTimer !== null) {
+      window.clearTimeout(this.playTimer);
+      this.playTimer = null;
+    }
+  }
+
   private async saveRecord() {
     if (!this.ready || !this.state) return;
     try {
@@ -874,6 +941,7 @@ export class App {
       this.humanPrevState = null;
       this.state = res.state;
       this.review = true;
+      this.stopAutoPlay();
       this.recordMoves = [...res.state.moves];
       this.variation = [...res.state.moves];
       this.pos = this.variation.length;
@@ -955,6 +1023,12 @@ export class App {
       btn.classList.toggle("active", on);
     }
     $("review-bar").classList.toggle("hidden", !this.review);
+    const playBtn = document.querySelector<HTMLButtonElement>(
+      "#review-buttons button[data-play-toggle]");
+    if (playBtn) {
+      playBtn.textContent = this.playing ? "暂停" : "自动播放";
+      playBtn.classList.toggle("active", this.playing);
+    }
     const st = this.state;
     const tier = TIERS[this.tier];
     const vtxt = this.versionText();
@@ -1177,6 +1251,7 @@ export class App {
       input.checked = input.value === this.limitMode;
     }
     ($("limit-seconds") as HTMLInputElement).value = String(this.limitSeconds);
+    ($("play-seconds") as HTMLInputElement).value = String(this.playSeconds);
     settings.classList.remove("hidden");
   }
 
@@ -1195,8 +1270,12 @@ export class App {
     if (limitInput) this.limitMode = limitInput.value === "ai" ? "ai" : "none";
     const seconds = Number(($("limit-seconds") as HTMLInputElement).value);
     if (Number.isFinite(seconds)) this.limitSeconds = Math.max(1, Math.min(600, Math.round(seconds)));
+    const playSeconds = Number(($("play-seconds") as HTMLInputElement).value);
+    if (Number.isFinite(playSeconds)) {
+      this.playSeconds = Math.round(Math.max(0.1, Math.min(10, playSeconds)) * 10) / 10;
+    }
     this.closeSettings();
-    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"}`);
+    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 自动播放 ${this.playSeconds}s`);
     this.syncPanel();
     this.maybeRunAi();
   }

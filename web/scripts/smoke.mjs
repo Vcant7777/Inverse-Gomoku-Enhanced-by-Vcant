@@ -260,6 +260,23 @@ await page.evaluate(() => window.__antifive.reviewReset());
 await wait(() => window.__antifive.pos === 10);
 check(true, "review reset");
 
+// 自动播放:按设定间隔逐手前进;暂停后停止
+const autoplay = await page.evaluate(async () => {
+  const app = window.__antifive;
+  app.playSeconds = 0.1;
+  app.toggleAutoPlay();
+  const t0 = Date.now();
+  while (app.pos < 13 && Date.now() - t0 < 5000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const advanced = app.pos;
+  const wasPlaying = app.playing;
+  app.toggleAutoPlay();
+  return { advanced, wasPlaying, stopped: app.playing === false && app.playTimer === null };
+});
+check(autoplay.advanced >= 13 && autoplay.wasPlaying && autoplay.stopped,
+  "autoplay advances review");
+
 const afg = await page.evaluate(async () => {
   const app = window.__antifive;
   const res = await app.engine.call("export", { moves: app.recordMoves, result: app.reviewResult });

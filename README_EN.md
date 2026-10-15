@@ -87,7 +87,8 @@ Play in the browser, no installation:
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay
-  timeline with branch trials, `.afg` import/export, and all four play modes.
+  timeline with auto-play and branch trials, `.afg` import/export, and all four
+  play modes.
 - KataGo and the torch network cannot run in the browser; the web version ships
   the heuristic AI only.
 
@@ -237,6 +238,7 @@ If the default Python lacks dependencies, run
 | E | Settings panel |
 | 1–4 | Human-Black / Human-White / Human-Human / AI-AI |
 | ← → | Review back / forward |
+| Space | Replay auto-play / pause (per-move interval set in Settings) |
 | Esc | Quit |
 
 Left click: place / capture / relocate-phase placement. The `认输` (Resign)

@@ -33,7 +33,9 @@
   安置待定时悬停可达格显示淡色预览箭头
 - 复盘:一局结束或读取棋谱后自动进入复盘模式,底部出现尺子式手数轴
   (隔 10 长刻度并标数、隔 5 中刻度、隔 1 短刻度),
-  可点轴跳转、按钮/方向键逐手回退,未终局时可点击棋盘试下
+  可点轴跳转、按钮/方向键逐手回退,「自动播放」(空格键同效)按设定间隔
+  (设定面板「复盘自动播放间隔」)逐手重放,播完自动停、到末尾再点从头重放,
+  手动跳转/试下即暂停;未终局时可点击棋盘试下
   (分支变化,「原谱」按钮一键恢复主变化)
 
 棋谱:.afg 纯文本格式(见 record.py),含规则配置与结果,可供 AI 训练解析。
@@ -99,6 +101,7 @@ HEURISTIC_VCF_DEFAULT = True        # 中级/高级/地狱是否启用强制杀�
 AI_TIME_BUDGET_DEFAULT = 12.0    # 默认读秒:AI 每步思考时间上限(秒)
 LIMIT_MODE_DEFAULT = "ai"        # 默认仅 AI 限时读秒(不限时可被搜太慢,深度 8 尤甚)
 NN_SIMS_DEFAULT = 1200           # 神经网络"决策默认阈值"(默认模拟次数)
+AUTO_PLAY_INTERVAL_DEFAULT = 1.0  # 复盘自动播放每手间隔秒数(设定面板可调 0.1-10.0)
 
 MODE_NAMES = ("人执黑", "人执白", "人人对战", "机机观战")
 MODE_HUMAN = {0: BLACK, 1: WHITE}          # 人类执子颜色,2/3 无人类
@@ -996,6 +999,7 @@ class SettingsScreen:
         self.ai_time_budget = app.ai_time_budget
         self.mcts_sims = app.mcts_sims
         self.ai_temp = app.ai_temp
+        self.auto_play_interval = app.auto_play_interval
         self.kata_weight = app.kata_cfg.get("weight", "")
         self.kata_engine = app.kata_cfg.get("engine", "")
         self.kata_config = app.kata_cfg.get("config", "")
@@ -1003,7 +1007,7 @@ class SettingsScreen:
         self.model_scroll = 0
         self.focus_box = None          # 当前聚焦的 _InputBox 或 None
         self.path_box = self.depth_box = self.time_box = self.sims_box = None
-        self.temp_box = None
+        self.temp_box = self.play_box = None
         self.kata_weight_box = self.kata_engine_box = self.kata_config_box = None
         self._kata_weight_btn = None
         self._kata_weight_browse = self._kata_engine_browse = \
@@ -1144,10 +1148,23 @@ class SettingsScreen:
                                       mode="float")
         else:
             self.temp_box.rect = self._temp_input
-        y += 34 + 22
-        bw3 = 180
-        self._cancel_rect = pygame.Rect(c.centerx - bw3 - 10, y, bw3, 42)
-        self._confirm_rect = pygame.Rect(c.centerx + 10, y, bw3, 42)
+        y += 34 + 12
+        # 复盘自动播放速度:每手间隔秒数(0.1-10.0)
+        self._play_rect = pygame.Rect(x0, y, w, 34)
+        self._play_minus = pygame.Rect(x0 + w - 96, y, 32, 34)
+        self._play_plus = pygame.Rect(x0 + w - 34, y, 32, 34)
+        self._play_input = pygame.Rect(x0 + w - 96 - 10 - 140, y, 140, 34)
+        if self.play_box is None:
+            self.play_box = _InputBox(self._play_input,
+                                      f"{self.auto_play_interval:.1f}",
+                                      mode="float")
+        else:
+            self.play_box.rect = self._play_input
+        y += 34 + 12
+        # 底部按钮右对齐、收窄,左侧空位放操作提示(新增播放行后仍不超高卡片)
+        bw3 = 160
+        self._cancel_rect = pygame.Rect(c.right - 26 - bw3 - 10 - bw3, y, bw3, 42)
+        self._confirm_rect = pygame.Rect(c.right - 26 - bw3, y, bw3, 42)
 
     # ---- 交互 ----
     def handle(self, ev):
@@ -1184,7 +1201,7 @@ class SettingsScreen:
         # 先提交并失焦当前输入框
         self._blur_box()
         for b in (self.path_box, self.depth_box, self.time_box, self.sims_box,
-                  self.temp_box,
+                  self.temp_box, self.play_box,
                   self.kata_weight_box, self.kata_engine_box, self.kata_config_box):
             if b is not None and b.rect.collidepoint(pos):
                 b.active = True
@@ -1285,6 +1302,14 @@ class SettingsScreen:
             self.ai_temp = min(2.0, round(self.ai_temp + 0.1, 2))
             self.temp_box.set_text(f"{self.ai_temp:g}")
             return None
+        if self._play_minus.collidepoint(pos):
+            self.auto_play_interval = max(0.1, round(self.auto_play_interval - 0.1, 1))
+            self.play_box.set_text(f"{self.auto_play_interval:.1f}")
+            return None
+        if self._play_plus.collidepoint(pos):
+            self.auto_play_interval = min(10.0, round(self.auto_play_interval + 0.1, 1))
+            self.play_box.set_text(f"{self.auto_play_interval:.1f}")
+            return None
         if self._confirm_rect.collidepoint(pos):
             return "confirm"
         if self._cancel_rect.collidepoint(pos):
@@ -1335,6 +1360,10 @@ class SettingsScreen:
             self.ai_temp = self._clamp_num(b.text, self.ai_temp,
                                                  0.0, 2.0, 2)
             b.set_text(f"{self.ai_temp:g}")
+        elif b is self.play_box:
+            self.auto_play_interval = self._clamp_num(b.text, self.auto_play_interval,
+                                                      0.1, 10.0, 1)
+            b.set_text(f"{self.auto_play_interval:.1f}")
         elif b is self.path_box:
             self.model_path = b.text or None
         elif b is self.kata_weight_box:
@@ -1398,6 +1427,8 @@ class SettingsScreen:
         self._draw_numrow(screen, font_sm, "AI 温度(KataGo,0=最优)",
                           self.temp_box,
                           self._temp_rect, self._temp_minus, self._temp_plus)
+        self._draw_numrow(screen, font_sm, "复盘自动播放间隔(秒)", self.play_box,
+                          self._play_rect, self._play_minus, self._play_plus)
         # 按钮
         for r, label in ((self._cancel_rect, "取消"), (self._confirm_rect, "确定")):
             hover = r.collidepoint(mouse)
@@ -1409,7 +1440,7 @@ class SettingsScreen:
                               r.centery - txt.get_height() // 2))
         hint = "Enter 确定 · Esc 取消 · 右上角时钟点击可随时开关读秒"
         t = font_xs.render(hint, True, (140, 120, 90))
-        screen.blit(t, (c.centerx - t.get_width() // 2, c.bottom - 26))
+        screen.blit(t, (self._x0, self._cancel_rect.centery - t.get_height() // 2))
 
     def _draw_section(self, screen, label, y):
         t = self.app.font_sm.render(label, True, COLOR_WOOD_DARK)
@@ -1599,6 +1630,9 @@ class App:
         self.review_result = "未完"   # 原谱结果文本
         self.review_btns: list = []   # 底部按钮 (rect, label, fn)
         self.review_axis = None       # 手数轴命中区 (x0, x1, y0, y1),未绘制时为 None
+        self.auto_play = False        # 复盘自动播放中(按钮/空格开关)
+        self.auto_play_next = 0.0     # 自动播放下一步的截止时间
+        self.auto_play_interval = AUTO_PLAY_INTERVAL_DEFAULT  # 每手间隔秒数(设定面板可调)
 
     # ---- 引擎 ----
     def set_engine(self, kind: str, path: str = None, depth: int = None,
@@ -1699,6 +1733,7 @@ class App:
             self.ai_time_budget = max(1.0, float(s.ai_time_budget))
             self.mcts_sims = max(100, int(s.mcts_sims))
             self.ai_temp = max(0.0, min(2.0, float(s.ai_temp)))
+            self.auto_play_interval = max(0.1, min(10.0, float(s.auto_play_interval)))
             if s.kind == "heuristic":
                 self.set_engine("heuristic", depth=int(s.depth),
                                 version=s.heuristic_version,
@@ -1851,6 +1886,7 @@ class App:
             self.ai_result = None
         self.epoch += 1
         self.review = False
+        self.auto_play = False
         self.arrow_anim = None
         self.confirm_idx = None
         self.resign_armed_until = 0.0
@@ -1987,6 +2023,7 @@ class App:
         self.record_moves = list(self.game.record())
         self.moves = list(self.record_moves)
         self.pos = len(self.moves)
+        self.auto_play = False
         self.review_divergence = None
         self.review_result = record.game_result(self.game)
         self.result_shown_at = 0.0
@@ -1995,8 +2032,11 @@ class App:
         self.resign_armed_until = 0.0
         self._mark_move_arrow(False)
 
-    def review_jump(self, k: int) -> None:
-        """跳到第 k 手(0=开局),从零重建局面。"""
+    def review_jump(self, k: int, keep_playing: bool = False) -> None:
+        """跳到第 k 手(0=开局),从零重建局面。手动跳转即暂停自动播放,
+        keep_playing=True 仅自动播放内部逐手推进时使用。"""
+        if not keep_playing:
+            self.auto_play = False
         self.pos = int(max(0, min(k, len(self.moves))))
         with self.ai_lock:
             self.ai_result = None
@@ -2043,6 +2083,21 @@ class App:
             self.review_divergence = self.pos     # 分支点 = 试下前那一手
         self.moves = self.moves[:self.pos] + [int(idx)]
         self.review_jump(self.pos + 1)
+
+    def toggle_auto_play(self) -> None:
+        """复盘自动播放开关:按设定间隔逐手前进,播到终局自动停;
+        已在末尾时再点则从头重放。任何手动跳转/试下都会自动暂停。"""
+        if not self.review or not self.moves:
+            return
+        if self.auto_play:
+            self.auto_play = False
+            self.set_status("自动播放已暂停")
+            return
+        if self.pos >= len(self.moves):
+            self.review_jump(0, keep_playing=True)   # 已到末尾:从头播放
+        self.auto_play = True
+        self.auto_play_next = time.time() + self.auto_play_interval
+        self.set_status(f"自动播放中 · 每手 {self.auto_play_interval:.1f} 秒")
 
     def _bottom_click(self, pos) -> None:
         """底部工具条点击:先开关按钮,再复盘导航按钮,最后手数轴。"""
@@ -2207,6 +2262,8 @@ class App:
                 self.review_prev()
             if edge(pygame.K_RIGHT):
                 self.review_next()
+            if edge(pygame.K_SPACE):
+                self.toggle_auto_play()
 
     # ---- 主循环 ----
     def run(self):
@@ -2271,6 +2328,8 @@ class App:
                         self.review_prev()
                     elif self.review and ev.key == pygame.K_RIGHT:
                         self.review_next()
+                    elif self.review and ev.key == pygame.K_SPACE:
+                        self.toggle_auto_play()
                 elif ev.type == pygame.TEXTINPUT:
                     # 输入法/远程桌面等环境下 KEYDOWN 可能被吞,以文本事件兜底触发快捷键
                     k = ev.text.lower()
@@ -2278,7 +2337,7 @@ class App:
                              "n": pygame.K_n, "a": pygame.K_a, "h": pygame.K_h,
                              "c": pygame.K_c, "m": pygame.K_m,
                              "s": pygame.K_s, "l": pygame.K_l,
-                             "e": pygame.K_e}.get(k)
+                             "e": pygame.K_e, " ": pygame.K_SPACE}.get(k)
                     if kcode is not None:
                         if kcode in self._handled_keys:
                             continue        # 本帧 KEYDOWN 已处理过,避免重复触发
@@ -2308,6 +2367,8 @@ class App:
                     elif k in ("1", "2", "3", "4"):
                         self.mode = int(k) - 1
                         self.new_game()
+                    elif k == " " and self.review:
+                        self.toggle_auto_play()
                 elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                     self._on_left_click(self._map_pos(ev.pos))
                 elif ev.type == pygame.MOUSEMOTION:
@@ -2365,6 +2426,15 @@ class App:
                         self.game.game_over = True
                         self.game.loser = self.game.current_player
                     self.enter_review(True)
+
+                # 复盘自动播放:按设定间隔逐手前进,播到终局自动停
+                if (self.auto_play and self.review
+                        and time.time() >= self.auto_play_next):
+                    if self.pos >= len(self.moves):
+                        self.auto_play = False
+                    else:
+                        self.review_jump(self.pos + 1, keep_playing=True)
+                        self.auto_play_next = time.time() + self.auto_play_interval
 
             # 绘制到虚拟画布,再缩放到实际窗口
             self.screen, self.virtual = self.virtual, self.screen
@@ -2688,7 +2758,9 @@ class App:
         """横栏右侧变化提示(随状态切换,与右侧面板状态框信息互补)。
         文案保持精简,避免与加宽的开关按钮行(6 个)重叠错位。"""
         if self.review:
-            if self.game.game_over:
+            if self.auto_play:
+                hint = "自动播放中 · 点「暂停」或手动跳转停止"
+            elif self.game.game_over:
                 hint = "终局 · 点轴跳转回看"
             elif self.moves != self.record_moves:
                 hint = "试下中 · 原谱按钮恢复主变化"
@@ -2702,7 +2774,7 @@ class App:
     def _draw_shortcut_hints(self, y: int) -> None:
         """底部单行快捷键提示(不换行)。"""
         line = ("R新局 U悔棋 D危险 N手数 A箭头 H射线 C确认 M音效 "
-                "S保存 L读取 E设定 Esc退出 1-4模式")
+                "S保存 L读取 E设定 空格播放 Esc退出 1-4模式")
         t = self.font_xs.render(line, True, COLOR_TEXT)
         self.screen.blit(t, (16, y))
 
@@ -2730,13 +2802,18 @@ class App:
     def _draw_review_nav(self, y0: int) -> None:
         self.review_btns = []
         x = 16
-        for label, fn in (("开局", self.review_home), ("上一手", self.review_prev),
-                          ("下一手", self.review_next), ("终局", self.review_end),
-                          ("原谱", self.review_reset)):
-            w = 60 if label in ("开局", "终局", "原谱") else 68
+        btns = (("开局", self.review_home, 60, False),
+                ("上一手", self.review_prev, 68, False),
+                ("暂停" if self.auto_play else "自动播放", self.toggle_auto_play,
+                 84, self.auto_play),
+                ("下一手", self.review_next, 68, False),
+                ("终局", self.review_end, 60, False),
+                ("原谱", self.review_reset, 60, False))
+        for label, fn, w, active in btns:
             rect = pygame.Rect(x, y0 + 8, w, 30)
             self.review_btns.append((rect, label, fn))
-            pygame.draw.rect(self.screen, COLOR_BTN, rect, border_radius=8)
+            color = COLOR_BTN_ACT if active else COLOR_BTN
+            pygame.draw.rect(self.screen, color, rect, border_radius=8)
             pygame.draw.rect(self.screen, COLOR_WOOD_DARK, rect, 2, border_radius=8)
             txt = self.font_sm.render(label, True, COLOR_TEXT)
             self.screen.blit(txt, (rect.centerx - txt.get_width() // 2,
