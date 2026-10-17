@@ -1,4 +1,4 @@
-"""启发式小 AI(强化版「地狱」):极小化搜索 + 全局局面评估 + 选择性候选着法
+"""启发式小 AI(强化版「大师」):极小化搜索 + 全局局面评估 + 选择性候选着法
 
 v6(2026-10-13,防守强化;「高级」已冻结为 tools/heuristic_v6.py):
 - 深化 VCF(对高级 +112 Elo 的主要来源):强制杀链 d8/6 万节点/0.6s →
@@ -106,6 +106,7 @@ from .reversegomoku import (
     danger_map_for, fwd_run_lengths,
 )
 from . import distill
+from . import distill2
 from . import openbook
 from . import threat_search
 from .tactics import (
@@ -200,7 +201,7 @@ LMR_MIN_IDX = 3
 # 改为与搜索历史无关,否则不得启用。
 USE_ROOT_PVS = False
 
-# ---- 地狱档能力开关(默认全开;仅供内部 A/B 归因与回退) ----
+# ---- 大师档能力开关(默认全开;仅供内部 A/B 归因与回退) ----
 def _env_off(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -239,8 +240,14 @@ NO_ROOT_PVS = _env_off("ANTIFIVE_NO_ROOT_PVS")  # 关根 α 传播 + PVS
 # 实测在完整根窗搜索下收益不稳定,故默认不启用)。
 ROOT_K_CORE = _env_int("ANTIFIVE_ROOT_CORE", 8)
 
+# ---- KataGo 蒸馏 v2(默认关;「传奇」冻结快照内改为常开) ----
+# 开启后:evaluate 在 v1 价值校正之上叠加 distill2 MLP;先验走 18 维特征 +
+# 5 格模式。distill_data2 缺失/维度不符时 distill2 自动退化,行为与关闭一致。
+USE_DISTILL2 = _env_on("ANTIFIVE_DISTILL2", False)
+_ACTIVE2 = bool(USE_DISTILL2 and distill2.ENABLED)
 
-# ---- 地狱档深化 VCF:杀链深度/节点/时限显著高于冻结档 ----
+
+# ---- 大师档深化 VCF:杀链深度/节点/时限显著高于冻结档 ----
 # 整局走向常由"占领+安置"强制杀链决定(对 KataGo 复盘:96/96 败局均为移子
 # 杀),冻结档 VCF 深度 8/60000 节点/0.6s 在深杀链上漏杀,防守端也因此漏看。
 VCF_MAX_DEPTH_HELL = _env_int("ANTIFIVE_HELL_VCF_DEPTH", 12)
@@ -263,7 +270,7 @@ def _inner_k(depth: int) -> int:
 # ---- 调优参数运行时加载(包内 antifive/params.json,随 wheel 分发) ----
 # 白名单:E_*/O_* 数值常量与 ROOT_K/INNER_K(与 tools/param_tune.py 的
 # _PARAM_RANGES 对应)。加载只覆盖这些键,防止外部文件篡改搜索常量。
-# 桌面覆盖:data/params_hell.json(地狱档)优先,其次 data/params.json;
+# 桌面覆盖:data/params_hell.json(大师档)优先,其次 data/params.json;
 # 都缺失时回退包内文件——网页(Pyodide)没有仓库 data/ 目录,靠包内文件
 # 才能吃到调优参数(此前静默回退内置常量的缺口已修)。
 _PARAM_NAMES = frozenset(
@@ -285,9 +292,9 @@ def package_params_path() -> Path:
 
 
 def _default_params_path() -> Path:
-    """地狱档默认参数文件解析(按优先级):
+    """大师档默认参数文件解析(按优先级):
 
-    1. `data/params_hell.json`(桌面地狱档覆盖,可 ANTIFIVE_NO_HELL_PARAMS 关闭);
+    1. `data/params_hell.json`(桌面大师档覆盖,可 ANTIFIVE_NO_HELL_PARAMS 关闭);
     2. `data/params.json`(桌面覆盖,param_tune 输出);
     3. 包内 `antifive/params.json`(随 wheel 分发;网页/Pyodide 与纯净安装)。"""
     if not NO_HELL_PARAMS:
@@ -923,8 +930,16 @@ def evaluate(board: np.ndarray, player: int, pending: int, turn_count: int,
             and kill_placements(board, player, pending, turn_count,
                                 white_turns, config).size:
         s += E_PENDING_KILL
-    if distill.ENABLED:
-        # KataGo 蒸馏价值校正(未训练/未启用时返回 0,不改变行为)
+    if _ACTIVE2 and distill2.HAS_VALUE:
+        # KataGo 蒸馏 v2 价值校正(MLP):激活时**替换** v1——离线诊断显示
+        # v2 与目标相关性显著更高(0.68 vs 0.33);叠加配置 12s×96 仅 47:49
+        # (约五五开),替换后 75:21(78.1%),故采用替换语义。
+        s += distill2.value_score(_value2_features(
+            player, m_black, m_white, danger_cnt, danger_mine, empty,
+            adj_b, adj_w, cl_b, cl_w, ct_b, ct_w,
+            pending, turn_count, white_turns))
+    elif distill.ENABLED:
+        # KataGo 蒸馏 v1 价值校正(未训练/未启用时返回 0,不改变行为)
         s += distill.value_score(_value_features(
             player, m_black, m_white, danger_cnt, danger_mine, empty,
             adj_b, adj_w, cl_b, cl_w, ct_b, ct_w))
@@ -1004,15 +1019,70 @@ def _prior_features(board: np.ndarray, player: int, pending: int,
     return sc, distill.pattern_tokens(board, player, mv)
 
 
+_PRIOR2_DIM = _PRIOR_DIM + 4     # v2 先验标量特征维数(与 distill_data2 对齐)
+
+
+def _prior2_features(board: np.ndarray, player: int, pending: int,
+                     turn_count: int, white_turns: int, config: GameConfig,
+                     moves) -> tuple:
+    """蒸馏 v2 先验特征:在 v1 的 14 维之上追加 4 维 push 专属特征(共 18 维),
+    模式 token 换用 5 格窗口。返回 (scalars (M,_PRIOR2_DIM), tokens (M,8))。
+
+    追加特征(列 14-17):
+    - 14 空位候选(=1 普通落子);15 占领候选可达安置格数/16;
+    - 16 该占领的强制杀安置数/8;17 安置候选落在杀格(=1,手中棋子一步杀)。"""
+    mv = np.asarray(moves, dtype=np.int64)
+    sc14, _ = _prior_features(board, player, pending, turn_count, white_turns,
+                              config, mv)
+    flat = board.reshape(-1)
+    opp = _other(player)
+    sc = np.empty((len(mv), _PRIOR2_DIM), dtype=np.float64)
+    sc[:, :_PRIOR_DIM] = sc14
+    sc[:, 14] = (flat[mv] == EMPTY).astype(np.float64)
+    reach = np.zeros(len(mv), dtype=np.float64)
+    kill_cnt = np.zeros(len(mv), dtype=np.float64)
+    if len(mv) and pending < 0:
+        kill_map: dict = {}
+        for c, _ in kill_captures(board, player, pending, turn_count,
+                                  white_turns, config, mv):
+            kill_map[int(c)] = kill_map.get(int(c), 0) + 1
+        for i, m in enumerate(mv):
+            mi = int(m)
+            if flat[mi] != opp:
+                continue
+            reach[i] = len(_place_targets(board, mi))
+            kill_cnt[i] = kill_map.get(mi, 0)
+    sc[:, 15] = np.minimum(reach, 16.0) / 16.0
+    sc[:, 16] = np.minimum(kill_cnt, 8.0) / 8.0
+    if pending >= 0:
+        kill_set = {int(x) for x in kill_placements(
+            board, player, pending, turn_count, white_turns, config)}
+        if kill_set:
+            sc[:, 17] = np.isin(
+                mv, np.fromiter(kill_set, dtype=np.int64, count=len(kill_set))
+            ).astype(np.float64)
+        else:
+            sc[:, 17] = 0.0
+    else:
+        sc[:, 17] = 0.0
+    return sc, distill2.pattern_tokens5(board, player, mv)
+
+
 def _prior_map(board: np.ndarray, player: int, pending: int, turn_count: int,
                white_turns: int, config: GameConfig, legal) -> np.ndarray:
-    """全部合法着法的蒸馏先验打分(平铺 225 数组,非法位为 0)。"""
+    """全部合法着法的蒸馏先验打分(平铺 225 数组,非法位为 0)。
+    v2 启用时走 MLP + 5 格模式;否则回退 v1 线性模型。"""
     pm = np.zeros(PLACE_SIZE, dtype=np.float64)
-    if not distill.HAS_PRIOR or not len(legal):
+    if not len(legal):
         return pm
-    sc, tk = _prior_features(board, player, pending, turn_count, white_turns,
-                             config, legal)
-    pm[legal] = distill.prior_scores(sc, tk)
+    if _ACTIVE2 and distill2.HAS_PRIOR:
+        sc, tk = _prior2_features(board, player, pending, turn_count,
+                                  white_turns, config, legal)
+        pm[legal] = distill2.prior_scores(sc, tk)
+    elif distill.HAS_PRIOR:
+        sc, tk = _prior_features(board, player, pending, turn_count,
+                                 white_turns, config, legal)
+        pm[legal] = distill.prior_scores(sc, tk)
     return pm
 
 
@@ -1058,6 +1128,27 @@ def _value_features(player: int, m_black: dict, m_white: dict, danger_cnt: int,
     return f
 
 
+_VALUE2_DIM = _VALUE_DIM + 5     # v2 价值特征维数(与 distill_data2 对齐)
+
+
+def _value2_features(player: int, m_black: dict, m_white: dict, danger_cnt: int,
+                     danger_mine: int, empty: int, adj_b: float, adj_w: float,
+                     cl_b: float, cl_w: float, ct_b: float, ct_w: float,
+                     pending: int, turn_count: int,
+                     white_turns: int) -> np.ndarray:
+    """价值校正 v2 特征(25 维):v1 的 20 维 + 回合状态/手中棋子/双方安全空位
+    (安全空位=空位数-该色连五危险格数,越大越不容易被送连五)。"""
+    f = np.empty(_VALUE2_DIM, dtype=np.float64)
+    f[:20] = _value_features(player, m_black, m_white, danger_cnt, danger_mine,
+                             empty, adj_b, adj_w, cl_b, cl_w, ct_b, ct_w)
+    f[20] = 1.0 if pending >= 0 else 0.0
+    f[21] = min(turn_count, 63) / 63.0
+    f[22] = min(white_turns, 63) / 63.0
+    f[23] = (empty - danger_mine) / PLACE_SIZE
+    f[24] = (empty - danger_cnt) / PLACE_SIZE
+    return f
+
+
 def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
                 white_turns: int, config: GameConfig, k: int,
                 history=None, out_legal=None, diversity: bool = False,
@@ -1094,11 +1185,14 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
                             O_HIST_CAP) * O_HIST
     prior_map = None
     pw = 0.0
-    if prior and distill.ENABLED and distill.HAS_PRIOR \
-            and float(distill.PRIOR_W) != 0.0:
-        prior_map = _prior_map(board, player, pending, turn_count, white_turns,
-                               config, legal)
-        pw = float(distill.PRIOR_W)
+    if prior:
+        if _ACTIVE2 and distill2.HAS_PRIOR:
+            pw = float(distill2.PRIOR_W)
+        elif distill.ENABLED and distill.HAS_PRIOR:
+            pw = float(distill.PRIOR_W)
+        if pw != 0.0:
+            prior_map = _prior_map(board, player, pending, turn_count,
+                                   white_turns, config, legal)
     out = []
     if pending >= 0:
         ends, route = _threats(board, player, white_turns, turn_count, config)
@@ -1502,7 +1596,7 @@ def _search(board: np.ndarray, player: int, pending: int, turn_count: int,
 def _vcf_slice(time_budget: float | None) -> float:
     """单步 VCF 预算:无对局限时时用基础预算(0.05s);有 budget 时按其 15%
     放宽并夹在 [VCF_TIME_CAP, VCF_TIME_CAP_HELL]。
-    地狱档杀链更深(d12/24万节点),需要更长证明预算;冻结档保持 5%/0.6s。"""
+    大师档杀链更深(d12/24万节点),需要更长证明预算;冻结档保持 5%/0.6s。"""
     base = threat_search.VCF_TIME_CAP
     if not time_budget:
         return base

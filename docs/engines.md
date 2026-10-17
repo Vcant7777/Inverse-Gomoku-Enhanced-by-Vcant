@@ -22,59 +22,65 @@ python -m antifive.gui --model models/best_model.pth
 
 ## 启发式 AI
 
-内置算法,无需额外文件;GUI 中可选深度 1–8(默认 8 + AI 读秒 12 秒,四档通用;
-地狱档在时限内动态加深,不受 8 层硬上限),并可切换四档引擎版本与 VCF 强制
-杀链开关(初级无 VCF;默认高级 + VCF 开):
+内置算法,无需额外文件;GUI 中可选深度 1–8(默认 8 + AI 读秒 12 秒,五档通用;
+大师/传奇在时限内动态加深,不受 8 层硬上限),并可切换五档引擎版本与 VCF
+强制杀链开关(初级无 VCF;默认高级 + VCF 开):
 
 | 版本 | 实现 | 组成 |
 |---|---|---|
 | 初级 | `tools/heuristic_v2.py` 冻结经典版 | 老算法,无 VCF/开局库/蒸馏 |
 | 中级 | `tools/heuristic_v5.py` 冻结快照 | 搜索一致性修复 + VCF v5.1 + 开局库 + 防守 VCF |
 | 高级(默认) | `tools/heuristic_v6.py` 冻结快照 | 中级 + KataGo 蒸馏价值校正(旧 `antifive.heuristic` 行为) |
-| 地狱 | `antifive.heuristic` | 高级 + 防守强化:深化 VCF(d12/24 万节点/≤1.8s)、严格时限预算管理与自适应防守预留、防守校验全候选 + 时限动态加深 |
+| 大师 | `antifive.heuristic` | 高级 + 防守强化:深化 VCF(d12/24 万节点/≤1.8s)、严格时限预算管理与自适应防守预留、防守校验全候选 + 时限动态加深(2026-10 前旧称「地狱」,内部键仍为 `hell`) |
+| 传奇 | `tools/heuristic_v7.py` 冻结快照 | 大师 + KataGo 蒸馏 v2:激活时 MLP 价值项**替换** v1(权重 0.5;`ANTIFIVE_DISTILL2=0` 退回大师)、5 格模式先验可选(`ANTIFIVE_PRIOR2_W`,默认 0) |
 
-「地狱」是**引擎版本**(困难/高级之上的强度档,可与任意搜索深度搭配),
+「大师」「传奇」是**引擎版本**(困难/高级之上的强度档,可与任意搜索深度搭配),
 网页与桌面都在「引擎版本」单选里选择;网页「AI 难度」仍为三档
-(简单/中等/困难 = 深度 2/4/8),不放地狱档,避免同一入口重复且互相覆盖
-(选地狱难度会静默忽略版本单选)。网页/桌面默认仍为困难/高级,不默认地狱。
+(简单/中等/困难 = 深度 2/4/8),不放引擎档位,避免同一入口重复且互相覆盖
+(选大师/传奇难度会静默忽略版本单选)。网页/桌面默认仍为困难/高级,
+不默认大师/传奇。
 调优参数内置在包内 `antifive/params.json`,随 wheel 分发(网页/Pyodide 与
 纯净安装都生效,此前网页端因无仓库 `data/` 目录而静默回退内置常量的问题已修);
 桌面可在 `data/params.json`(param_tune 输出)或 `data/params_hell.json`
-(仅地狱档优先)放覆盖文件。
+(仅大师档优先读取;传奇/高级/中级共用 `data/params.json`)放覆盖文件。
 A/B 开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
 `ANTIFIVE_NO_DYNAMIC=1`、`ANTIFIVE_NO_LMR=1`、`ANTIFIVE_NO_ROOT_PVS=1`
 (实验特性)、VCF 参数 `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME`。
 
 命令行行为 `--engine heuristic --heuristic-depth N --limit none|ai --ai-time S
---heuristic-version beginner|mid|advanced|hell --no-vcf`(兼容旧值 old/new)。
+--heuristic-version beginner|mid|advanced|hell|legend --no-vcf`
+(兼容旧值 old/new、「地狱」→hell)。
 参数内置 `antifive/params.json`(随包分发),桌面覆盖文件由
 `src/antifive/tools/param_tune.py` 调优输出(默认 `data/params.json`)。
 
-### 四档等时对拍(12s/步 × 96 局/对,seed 0,严格时限)
+### 大师档等时对拍(12s/步 × 96 局/对,seed 0,严格时限)
+
+> 历史口径:下表测量于 2026-10-13,当时的「地狱」即现「大师」(仅显示名变更,
+> 实现与环境变量不变);「传奇 vs 大师」见下方蒸馏 v2 小节(12s×96:75 : 21)。
 
 早期 1s 口径下低档被时钟饿死(高级对初级 98% 等);12s 口径下人人能完成
 深度 8,档间差距大幅收敛。2026-10-13 实测(`match_ai` 直接对拍,96 局/对;
-地狱档已修复"进攻 VCF 不计入本步预算"的超时问题,与对手同为严格 12s):
+大师档已修复"进攻 VCF 不计入本步预算"的超时问题,与对手同为严格 12s):
 
 | 配对(新 vs 旧) | 比分 | 近似 Elo 差(95% CI) |
 |---|---|---|
-| 地狱 vs 高级 | 63 : 33(65.6%) | +112(+41 ~ +184) |
-| 地狱 vs 中级 | 67 : 29(69.8%) | +145(+72 ~ +219) |
-| 地狱 vs 初级 | 76 : 20(79.2%) | +232(+149 ~ +314) |
+| 大师 vs 高级 | 63 : 33(65.6%) | +112(+41 ~ +184) |
+| 大师 vs 中级 | 67 : 29(69.8%) | +145(+72 ~ +219) |
+| 大师 vs 初级 | 76 : 20(79.2%) | +232(+149 ~ +314) |
 | 高级 vs 中级 | 48 : 48(50.0%) | 0(−68 ~ +68) |
 | 高级 vs 初级 | 51 : 45(53.1%) | +22(−46 ~ +89) |
 | 中级 vs 初级 | 68 : 28(70.8%) | +154(+78 ~ +225) |
 
 以初级为 1000 的相对 Elo(12s 口径,直接对初级换算):中级 ≈1154、
-高级 ≈1022、地狱 ≈1232;旧三档在 12s 下差距收敛且存在风格不一致
-(高级对中级 50%,中级对初级 70.8%),单对 CI 约 ±70 Elo。**地狱在三个
-直接配对中均显著领先(对高级 +112)**,是四档中的最强者。
+高级 ≈1022、大师 ≈1232;旧三档在 12s 下差距收敛且存在风格不一致
+(高级对中级 50%,中级对初级 70.8%),单对 CI 约 ±70 Elo。**大师在三个
+直接配对中均显著领先(对高级 +112)**,是当时四档中的最强者。
 
-> 复盘注:地狱档此前的"57.3% vs 高级"含预算超时(进攻 VCF 的时间未计入
+> 复盘注:大师档此前的"57.3% vs 高级"含预算超时(进攻 VCF 的时间未计入
 > 本步预算,平均多出数秒/步);修复后须在严格时限内取胜,当前成绩为
 > 修复后重新实测。
 
-### 防守强化机制(地狱档相对高级)
+### 防守强化机制(大师档相对高级)
 
 - **深化 VCF**:强制杀链从 d8/6 万节点/0.6s 提升到 d12/24 万节点/≤1.8s,
   攻防两侧共用同一预算(`_vcf_slice`);无对局限时改用确定性节点上限
@@ -126,14 +132,45 @@ python -m antifive.tools.train_distill --pool checkpoints/distill_pool.npz
 默认 0,设为正数开启)。等时对拍:价值校正 vs 修复前 144 局 129:15(89.6%,
 两个时限),策略先验单独启用 96 局 47:49(49%,故默认关闭)。
 
-对拍(等时强弱回归;冻结快照:`heuristic_v2`=初级、`heuristic_v5`=中级、
-`heuristic_v6`=高级、`antifive.heuristic`=地狱、`heuristic_v4`=搜索一致性
-修复前的旧快照):
+### KataGo 蒸馏 v2(「传奇」;与 v1 平行,不污染冻结档)
+
+`antifive/distill2.py` 的权重由 `tools/build_distill2_data.py`(规模化采样 +
+回放既有棋谱 + 两层标注:批量 2k visits、硬样本 20k visits 带 `tier`)与
+`tools/train_distill2.py`(D4×8 增广、按局切分;18 维先验 + 5 格模式表、
+25 维价值,单隐层 MLP)生成到包内 `antifive/distill_data2.py`:
 
 ```bash
-# 地狱 vs 高级(防守强化回归)
+python -m antifive.tools.build_distill2_data --games-selfplay 300 \
+    --games-katago 48 --replay-dir records/stage2_12s/games --workers 4 --minutes 40
+python -m antifive.tools.build_distill2_data --merge-only      # 分块续跑后合并
+python -m antifive.tools.train_distill2                          # 优先 distill2_pool.npz
+```
+
+运行时:大师档需 `ANTIFIVE_DISTILL2=1` 开启(默认关);**传奇快照
+`tools/heuristic_v7.py` 默认常开**(`ANTIFIVE_DISTILL2=0` 退回大师)。激活
+时 v2 价值项**替换** v1(而非叠加):离线诊断 v2 与 KataGo 价值相关性 0.68
+(v1 仅 0.33);叠加配置 12s×96 仅 47 : 49(约五五开),替换后 75 : 21。权重
+`ANTIFIVE_VALUE2_W`(默认 0.5;12s 下 0.5 优于 1.0:78.1% vs 70%)/
+`ANTIFIVE_PRIOR2_W`(默认 0=关)可缩放;数据缺失/维度不符时自动退化。
+
+正式数据:460 局(自对弈 300 + KataGo 对局 48 + 棋谱回放 112)标注出
+7664 个局面(硬样本 1016)。离线指标:价值 val MSE 0.592 / 符号 85.1%
+(v1 为 1.147 / 77.0%),先验 val top1 45.2% / top3 69.7%(v1 为 22.0% /
+46.6%)。**12s×96 等时对拍:传奇 75 : 21 大师(78.1%,近似 +210 Elo)**。
+策略先验的负结果:开启(`ANTIFIVE_PRIOR2_W=30`)后 8s×40 对拍仅 4 : 36(10%),
+大幅劣化,默认保持关闭;离线 top1 质量未转化为实战收益。
+
+对拍(等时强弱回归;冻结快照:`heuristic_v2`=初级、`heuristic_v5`=中级、
+`heuristic_v6`=高级、`antifive.heuristic`=大师、`heuristic_v7`=传奇、
+`heuristic_v4`=搜索一致性修复前的旧快照):
+
+```bash
+# 大师 vs 高级(防守强化回归)
 python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
     --new-module antifive.heuristic --old-module antifive.tools.heuristic_v6
+# 传奇 vs 大师(蒸馏 v2 回归;传奇默认开启 v2,大师可用 ANTIFIVE_DISTILL2=1 对齐)
+python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
+    --new-module antifive.tools.heuristic_v7 --old-module antifive.heuristic
 # 高级 vs 中级
 python -m antifive.tools.match_ai --games 96 --depth 8 --budget 12 --workers 8 \
     --new-module antifive.tools.heuristic_v6 \

@@ -107,9 +107,10 @@ class Engine:
             if out.startswith("? "):
                 raise RuntimeError(out)
 
-    def analyze(self, color: str) -> tuple:
-        """返回 (best_coord, [(move, visits, winrate), ...] top-20)。"""
-        self.set_visits(self.visits)
+    def analyze(self, color: str, visits: int | None = None) -> tuple:
+        """返回 (best_coord, [(move, visits, winrate), ...] top-20)。
+        visits 可选:覆盖本实例默认访问数(两层标注:批量低访问 + 硬样本高访问)。"""
+        self.set_visits(self.visits if visits is None else int(visits))
         self.proc.stdin.write(
             f"kata-genmove_analyze {color} 50 maxmoves {MAX_CAND}\n")
         self.proc.stdin.flush()

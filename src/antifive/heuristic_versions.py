@@ -1,17 +1,21 @@
 """启发式引擎版本调度(桌面 GUI / 网页共用)
 
-四档(名字与 GUI 一致):
+五档(名字与 GUI 一致;显示名「大师」「传奇」于 2026-10 由「地狱」拆分而来):
 - beginner(初级):`antifive.tools.heuristic_v2` 冻结经典版(无 VCF/开局库/蒸馏);
 - mid(中级):`antifive.tools.heuristic_v5` 冻结快照(搜索一致性修复 + VCF v5.1
   深杀 + KataGo 开局库 + 防守 VCF,无蒸馏);
 - advanced(高级):`antifive.tools.heuristic_v6` 冻结快照(中级 + KataGo 蒸馏价值
   校正,即此前 `antifive.heuristic` 的行为基线);
-- hell(地狱):当前强化版 `antifive.heuristic`(在高级基础上增加防守强化:
-  深化 VCF(d12/24 万节点/≤1.8s)、严格时限预算管理与自适应防守预留、
-  防守校验全候选、时限驱动的动态加深;P1/P2 代码保留但默认关闭)。
+- hell(大师,内部键保留 hell 兼容旧设置/文档/环境变量):当前强化版
+  `antifive.heuristic`(防守强化:深化 VCF(d12/24 万节点/≤1.8s)、严格时限
+  预算管理与自适应防守预留、防守校验全候选、时限驱动动态加深;P1/P2 代码
+  保留但默认关闭);
+- legend(传奇):`antifive.tools.heuristic_v7` 冻结快照(大师 + KataGo 蒸馏 v2
+  默认开启:价值校正 MLP 叠加、5 格模式先验可选;`ANTIFIVE_DISTILL2=0` 可退
+  回大师行为)。
 
 统一入口,避免 GUI / web_api 各自处理多套函数签名差异。
-兼容旧值:"old"→初级、"new"→高级。
+兼容旧值:"old"→初级、"new"→高级、"地狱"→hell(大师)。
 """
 
 from __future__ import annotations
@@ -20,10 +24,12 @@ VERSION_BEGINNER = "beginner"
 VERSION_MID = "mid"
 VERSION_ADVANCED = "advanced"
 VERSION_HELL = "hell"
+VERSION_LEGEND = "legend"
 VERSION_CHOICES = (VERSION_BEGINNER, VERSION_MID, VERSION_ADVANCED,
-                   VERSION_HELL)
+                   VERSION_HELL, VERSION_LEGEND)
 VERSION_LABELS = {VERSION_BEGINNER: "初级", VERSION_MID: "中级",
-                  VERSION_ADVANCED: "高级", VERSION_HELL: "地狱"}
+                  VERSION_ADVANCED: "高级", VERSION_HELL: "大师",
+                  VERSION_LEGEND: "传奇"}
 
 _ALIASES = {
     "old": VERSION_BEGINNER,
@@ -32,12 +38,17 @@ _ALIASES = {
     "mid": VERSION_MID,
     "advanced": VERSION_ADVANCED,
     "hell": VERSION_HELL,
+    "master": VERSION_HELL,
     "地狱": VERSION_HELL,
+    "大师": VERSION_HELL,
+    "legend": VERSION_LEGEND,
+    "传奇": VERSION_LEGEND,
 }
 
 _OLD_MODULE = None
 _MID_MODULE = None
 _ADV_MODULE = None
+_LEGEND_MODULE = None
 
 
 def label(version: str) -> str:
@@ -49,7 +60,7 @@ def normalize(version: str | None) -> str:
 
 
 def supports_vcf(version: str) -> bool:
-    """初级(v2 冻结版)没有 VCF;中级/高级/地狱均支持。"""
+    """初级(v2 冻结版)没有 VCF;中级/高级/大师/传奇均支持。"""
     return normalize(version) != VERSION_BEGINNER
 
 
@@ -77,10 +88,18 @@ def _adv():
     return _ADV_MODULE
 
 
+def _legend():
+    global _LEGEND_MODULE
+    if _LEGEND_MODULE is None:
+        from .tools import heuristic_v7
+        _LEGEND_MODULE = heuristic_v7
+    return _LEGEND_MODULE
+
+
 def choose(version: str, board, player, pending, turn_count, white_turns,
            config, rng, depth=None, time_budget=None, progress_cb=None,
            tt=None, use_vcf: bool | None = None):
-    """统一着法选择:按版本分发;中级/高级/地狱支持 tt/use_vcf。"""
+    """统一着法选择:按版本分发;中级/高级/大师/传奇支持 tt/use_vcf。"""
     v = normalize(version)
     if v == VERSION_BEGINNER:
         return _old().choose_heuristic_move(
@@ -93,6 +112,11 @@ def choose(version: str, board, player, pending, turn_count, white_turns,
             tt=tt, use_vcf=use_vcf)
     if v == VERSION_ADVANCED:
         return _adv().choose_heuristic_move(
+            board, player, pending, turn_count, white_turns, config, rng,
+            depth=depth, time_budget=time_budget, progress_cb=progress_cb,
+            tt=tt, use_vcf=use_vcf)
+    if v == VERSION_LEGEND:
+        return _legend().choose_heuristic_move(
             board, player, pending, turn_count, white_turns, config, rng,
             depth=depth, time_budget=time_budget, progress_cb=progress_cb,
             tt=tt, use_vcf=use_vcf)
@@ -119,6 +143,11 @@ def analysis(version: str, board, player, pending, turn_count, white_turns,
             tt=tt, use_vcf=use_vcf)
     if v == VERSION_ADVANCED:
         return _adv().analysis_moves(
+            board, player, pending, turn_count, white_turns, config, rng,
+            depth=depth, time_budget=time_budget, k=k, progress_cb=progress_cb,
+            tt=tt, use_vcf=use_vcf)
+    if v == VERSION_LEGEND:
+        return _legend().analysis_moves(
             board, player, pending, turn_count, white_turns, config, rng,
             depth=depth, time_budget=time_budget, k=k, progress_cb=progress_cb,
             tt=tt, use_vcf=use_vcf)

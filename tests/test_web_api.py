@@ -116,7 +116,7 @@ def test_hint_candidates():
 
 def test_ai_engine_version_and_vcf_flags():
     for engine, vcf in (("new", True), ("new", False), ("old", True),
-                        ("old", False)):
+                        ("old", False), ("hell", False), ("legend", True)):
         _call(cmd="new")
         resp = _call(cmd="ai", depth=1, budget=2.0, engine=engine, vcf=vcf)
         assert resp["move"] is not None

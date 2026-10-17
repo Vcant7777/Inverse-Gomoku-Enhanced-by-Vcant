@@ -80,12 +80,14 @@ Play in the browser, no installation:
   at 15 seconds per move (customizable); "no clock" performs a full-depth search,
   with a 180s/move safety cap in the browser (the desktop build has no cap).
 - The settings dialog offers an **engine version** switch (Beginner classic /
-  Mid enhanced / Advanced + distillation / Hell defense-hardened, default
-  Advanced) and a **VCF forced-kill-chain** toggle (Mid/Advanced/Hell). "Hell"
-  is an engine version (the strength tier above Advanced, combinable with any
-  search depth), not a difficulty entry, so there is no duplicated/overriding
-  control. Equal-time round-robin: Advanced beats Mid 82%, Mid beats Beginner
-  88%, Advanced beats Beginner 98% (96 games each; Hell's Elo below).
+  Mid enhanced / Advanced + distillation / Master defense-hardened /
+  Legend = Master + distillation v2, default Advanced) and a **VCF
+  forced-kill-chain** toggle (Mid/Advanced/Master/Legend). "Master" and
+  "Legend" are engine versions (strength tiers above Advanced, combinable with
+  any search depth), not difficulty entries, so there is no duplicated/
+  overriding control. Equal-time round-robin: Advanced beats Mid 82%, Mid beats
+  Beginner 88%, Advanced beats Beginner 98% (96 games each; Master's Elo below).
+  Master was displayed as "Hell" before 2026-10 (internal key stays `hell`).
 - Settings can also adjust the **white-restriction turn count** (balance rule:
   White may not capture during its first N turns, default 2; 0 removes the
   restriction; applies to the next game) and the replay **auto-play** interval.
@@ -141,6 +143,17 @@ This project is an AI battle and GUI implementation of the game.
 
 ## Project Status (read first)
 
+- **v2.0 (2026-10) summary**: new fifth engine tier **Legend** = Master +
+  KataGo distillation v2 (MLP value correction **replaces** the v1 value term;
+  trained on 460 games / 7664 positions; offline value-sign 85.1%, policy
+  top-1 45.2%) — 12s × 96 equal-time match: Legend **75 : 21** (78.1%) over
+  Master. "Hell" was renamed **Master** (internal key/env vars unchanged);
+  the four-tier UI became five tiers. New distillation-v2 pipeline
+  (`build_distill2_data` record replay + two-tier hard-sample labeling,
+  `train_distill2` D4×8 augmentation) with in-package weights; tuned
+  parameters now ship inside the package (fixes the web silently falling back
+  to built-in constants); also merged: configurable white-push restriction
+  turns (0 = none) and replay auto-play.
 - **Practical engines are the heuristic AI and KataGo.** The self-trained
   policy/value network (`network.py` + `training/`) **failed overall**: due to
   limited self-play data and compute budget, its strength stays at best slightly
@@ -257,28 +270,31 @@ records the result as `[Result 黑认输/白认输]`.
 |---|---|---|---|
 | Uniform-prior MCTS | numpy | Low | default fallback |
 | Self-trained net MCTS | torch + `.pth` | Insufficient (training failed) | research only |
-| Heuristic AI | numpy | Medium-high | depth 1–8 (Hell deepens within the clock), default 8 + 12s AI clock; four versions: Beginner / Mid / Advanced / Hell |
+| Heuristic AI | numpy | Medium-high | depth 1–8 (Master/Legend deepen within the clock), default 8 + 12s AI clock; five versions: Beginner / Mid / Advanced / Master / Legend |
 | KataGo (inverse gomoku) | external exe + `.bin` | High | recommended |
 
-The heuristic AI needs no extra files (numpy) and comes in four tiers.
+The heuristic AI needs no extra files (numpy) and comes in five tiers.
 
 | Version | Key traits |
 |---|---|
 | Beginner | classic alpha-beta + global evaluation (no VCF / book / distillation) |
 | Mid | search-consistency fixes + proof-based VCF kill-chain + KataGo opening book + root defensive VCF |
 | Advanced (default) | Mid + KataGo-distilled value correction (tiny linear model predicts winrate, blended at 0.5) |
-| Hell | Advanced + deeper VCF (d12 / 240k nodes / ≤1.8 s) + strict-clock budget accounting with adaptive defensive reserve + clock-driven deepening; prophylactic candidates (P1) and latent-threat evaluation (P2) are kept behind switches and off by default (they lost equal-time A/B) |
+| Master | Advanced + deeper VCF (d12 / 240k nodes / ≤1.8 s) + strict-clock budget accounting with adaptive defensive reserve + clock-driven deepening; prophylactic candidates (P1) and latent-threat evaluation (P2) are kept behind switches and off by default (they lost equal-time A/B). Displayed as "Hell" before 2026-10 |
+| Legend | Master + KataGo distillation v2 (when active, the MLP value term **replaces** the v1 term: on by default, weight 0.5; 5-cell pattern prior optional via `ANTIFIVE_PRIOR2_W`; `ANTIFIVE_DISTILL2=0` falls back to Master). 12s × 96 equal-time match: Legend 75 : 21 Master (78.1%) |
 
 Historical 1 s/move equal-time Elo (96 games each; Beginner = 1000 anchor):
 Mid ≈ 1340, Advanced ≈ 1650 (Advanced beat Beginner 98%, Advanced beat Mid 82%,
 Mid beat Beginner 88%). At that budget the lower tiers were time-starved; at the
 actual GUI/web budget (12–15 s) the tiers converge. Strict-clock 12 s × 96-game
-results (seed 0; Hell no longer overruns its own clock): Hell beats Advanced
-63:33 (65.6%, Elo +112), Mid 67:29 (69.8%, +145), Beginner 76:20 (79.2%, +232)
-— Hell is the strongest tier by every direct pairing. Relative Elo anchored at
-Beginner = 1000 via direct matches: Mid ≈ 1154, Advanced ≈ 1022, Hell ≈ 1232
-(per-pairing CI ≈ ±70 Elo; the frozen tiers show style inconsistencies at 12 s).
-Full table and commands: `docs/engines.md`.
+results (seed 0; measured when Master was labelled "Hell"; Master no longer
+overruns its own clock): Master beats Advanced 63:33 (65.6%, Elo +112), Mid
+67:29 (69.8%, +145), Beginner 76:20 (79.2%, +232) — Master is the strongest
+tier by every direct pairing. Relative Elo anchored at Beginner = 1000 via
+direct matches: Mid ≈ 1154, Advanced ≈ 1022, Master ≈ 1232 (per-pairing
+CI ≈ ±70 Elo; the frozen tiers show style inconsistencies at 12 s). Full table
+and commands: `docs/engines.md`. Legend vs Master (12 s × 96): 75:21 (78.1%)
+after switching distillation v2 to replace the v1 value term.
 
 Defaults and common switches:
 
@@ -300,11 +316,15 @@ Defaults and common switches:
   `ANTIFIVE_NO_PARAMS=1` (skip the auto-loaded tuned parameters; the tuned set
   ships inside the package as `antifive/params.json`, so the web/Pyodide build
   and clean installs get it too; a desktop `data/params.json` (param_tune
-  output) or `data/params_hell.json` (Hell-only) overrides it), Hell switches
+  output) or `data/params_hell.json` (Master-only) overrides it), Master switches
   `ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1` (P1/P2, off by default),
   `ANTIFIVE_NO_DYNAMIC=1`, `ANTIFIVE_HELL_VCF_DEPTH/NODES/TIME` (deep VCF,
-  default d12 / 240k nodes / ≤1.8 s). Distillation training pipeline
-  (build_distill_data → train_distill) and engine/weight details: see
+  default d12 / 240k nodes / ≤1.8 s); Legend / distillation v2:
+  `ANTIFIVE_DISTILL2` (on by default for Legend; set 0 to fall back to Master),
+  `ANTIFIVE_VALUE2_W` (default 0.5, replaces the v1 value term),
+  `ANTIFIVE_PRIOR2_W` (default 0 = off).
+  Distillation training pipelines (v1: build_distill_data → train_distill;
+  v2: build_distill2_data → train_distill2) and engine/weight details: see
   [`models/README.md`](models/README.md) and
   [`docs/engines.md`](docs/engines.md) (Chinese).
 

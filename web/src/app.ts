@@ -10,8 +10,8 @@ interface Tier {
   depth: number;
 }
 
-// AI 难度 = 搜索深度(三档);「地狱」是引擎版本(见 hver 单选),不放在难度里,
-// 避免同一入口重复且互相覆盖(选地狱难度会静默忽略版本单选)。
+// AI 难度 = 搜索深度(三档);「大师」「传奇」是引擎版本(见 hver 单选),不放在
+// 难度里,避免同一入口重复且互相覆盖(选大师/传奇难度会静默忽略版本单选)。
 const TIERS: Tier[] = [
   { name: "简单", depth: 2 },
   { name: "中等", depth: 4 },
@@ -23,7 +23,7 @@ const TIERS: Tier[] = [
 const NO_LIMIT_FALLBACK_SECONDS = 180;
 
 const VERSION_LABELS: Record<string, string> = {
-  beginner: "初级", mid: "中级", advanced: "高级", hell: "地狱",
+  beginner: "初级", mid: "中级", advanced: "高级", hell: "大师", legend: "传奇",
 };
 
 const MODE_NAMES = ["人执黑", "人执白", "人人对战", "机机观战"];
@@ -67,7 +67,7 @@ export class App {
   private tier = 2;
   private limitMode: "none" | "ai" = "ai";
   private limitSeconds = 15;
-  private hver: "beginner" | "mid" | "advanced" | "hell" = "advanced";
+  private hver: "beginner" | "mid" | "advanced" | "hell" | "legend" = "advanced";
   private hvcf = true;
   private whiteRestrict = 2;        // 白棋前 N 手禁推(0=无禁推,新局生效)
 
@@ -274,7 +274,7 @@ export class App {
       tierRadios.appendChild(label);
     });
     const hverRadios = $("hver-radios");
-    for (const [value, text] of [["beginner", "初级(经典)"], ["mid", "中级(强化)"], ["advanced", "高级(+蒸馏)"], ["hell", "地狱(防守强化)"]] as const) {
+    for (const [value, text] of [["beginner", "初级(经典)"], ["mid", "中级(强化)"], ["advanced", "高级(+蒸馏)"], ["hell", "大师(防守强化)"], ["legend", "传奇(+蒸馏v2)"]] as const) {
       const label = document.createElement("label");
       const input = document.createElement("input");
       input.type = "radio";
@@ -1220,10 +1220,11 @@ export class App {
     $("review-pos").textContent = `${this.pos} / ${this.variation.length}`;
   }
 
-  private selectedVersion(): "beginner" | "mid" | "advanced" | "hell" {
+  private selectedVersion(): "beginner" | "mid" | "advanced" | "hell" | "legend" {
     const el = document.querySelector<HTMLInputElement>('input[name="hver"]:checked');
     const v = el?.value;
-    return v === "beginner" || v === "mid" || v === "hell" ? v : "advanced";
+    return v === "beginner" || v === "mid" || v === "hell" || v === "legend"
+      ? v : "advanced";
   }
 
   private versionText(): string {

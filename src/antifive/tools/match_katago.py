@@ -61,7 +61,9 @@ HEUR_OPT = "H"
 # 残留环境意外关掉(如 ANTIFIVE_NO_DISTILL=1)。
 _ENV_KEYS = ("ANTIFIVE_NO_PARAMS", "ANTIFIVE_NO_BOOK", "ANTIFIVE_NO_DISTILL",
              "ANTIFIVE_PRIOR_W", "ANTIFIVE_VALUE_W", "ANTIFIVE_VCF",
-             "ANTIFIVE_VCF_DEPTH", "ANTIFIVE_VCF_BUDGET", "ANTIFIVE_TT_BITS")
+             "ANTIFIVE_VCF_DEPTH", "ANTIFIVE_VCF_BUDGET", "ANTIFIVE_TT_BITS",
+             "ANTIFIVE_DISTILL2", "ANTIFIVE_NO_DISTILL2",
+             "ANTIFIVE_PRIOR2_W", "ANTIFIVE_VALUE2_W")
 
 
 # --------------------------------------------------------------------------
@@ -196,7 +198,7 @@ def _effective_params_file(version: str) -> str:
 
 def _heuristic_status(version: str, use_vcf: bool, depth: int,
                       budget: float) -> dict:
-    from .. import distill, openbook, threat_search
+    from .. import distill, distill2, openbook, threat_search
     v = normalize(version)
     return {
         "version": v,
@@ -210,6 +212,9 @@ def _heuristic_status(version: str, use_vcf: bool, depth: int,
         "distill_enabled": bool(distill.ENABLED),
         "distill_value_w": float(getattr(distill, "VALUE_W", 0.0) or 0.0),
         "distill_prior_w": float(getattr(distill, "PRIOR_W", 0.0) or 0.0),
+        "distill2_enabled": bool(distill2.ENABLED),
+        "distill2_value_w": float(getattr(distill2, "VALUE_W", 0.0) or 0.0),
+        "distill2_prior_w": float(getattr(distill2, "PRIOR_W", 0.0) or 0.0),
         "params_file": _effective_params_file(version),
         "env_overrides": {k: os.environ[k] for k in _ENV_KEYS if k in os.environ},
     }
@@ -602,7 +607,7 @@ def main():
                    help="启发式每步限时(秒)")
     p.add_argument("--heur-depth", type=int, default=8)
     p.add_argument("--heur-version", default="advanced",
-                   help="启发式版本(advanced/mid/beginner/hell)")
+                   help="启发式版本(advanced/mid/beginner/hell=大师/legend=传奇)")
     p.add_argument("--no-vcf", action="store_true", help="关闭启发式 VCF")
     p.add_argument("--max-steps", type=int, default=450)
     p.add_argument("--white-restrict", type=int, default=2)
@@ -673,7 +678,9 @@ def main():
           f"budget={hstatus['time_budget']}s vcf={hstatus['vcf']} "
           f"book={hstatus['book']}({hstatus['book_entries']}) "
           f"distill_value_w={hstatus['distill_value_w']} "
-          f"distill_prior_w={hstatus['distill_prior_w']}")
+          f"distill_prior_w={hstatus['distill_prior_w']} "
+          f"distill2={hstatus['distill2_enabled']}"
+          f"({hstatus['distill2_value_w']}/{hstatus['distill2_prior_w']})")
     if hstatus["env_overrides"]:
         print(f"注意:检测到启发式环境变量覆盖 {hstatus['env_overrides']}")
 

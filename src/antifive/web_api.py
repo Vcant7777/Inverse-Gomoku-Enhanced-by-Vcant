@@ -15,12 +15,13 @@ Web Worker 中的 JS 侧只做两件事:
 - {"cmd": "undo"}                                      悔一步
 - {"cmd": "resign", "player": 1|2 可选}                人类认输(默认当前行棋方)
 - {"cmd": "ai", "depth": 2|4|8, "budget": sec,
-   "engine": "beginner"|"mid"|"advanced", "vcf": bool}
+   "engine": "beginner"|"mid"|"advanced"|"hell"|"legend", "vcf": bool}
                                                        AI 走一步(默认高级+VCF;
-                                                       兼容旧值 old/new)
+                                                       兼容旧值 old/new/地狱)
 - {"cmd": "rays", "idx": n}                            占领预览:可安置格掩码
 - {"cmd": "hint", "depth": 2, "budget": 2.0,
-   "engine": "beginner"|"mid"|"advanced", "vcf": bool} 提示:候选着法与价值
+   "engine": "beginner"|"mid"|"advanced"|"hell"|"legend", "vcf": bool}
+                                                       提示:候选着法与价值
 - {"cmd": "export", "moves": [..]}                     导出 .afg 文本
 - {"cmd": "import", "text": "..."}                     读取 .afg 文本
 - {"cmd": "goto", "moves": [..], "pos": k, "result": s}

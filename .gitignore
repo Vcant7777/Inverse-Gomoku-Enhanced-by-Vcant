@@ -20,6 +20,9 @@ afg_save/
 gtp_logs/
 *.log
 
+# 宣传视频素材与脚本(不随仓库分发)
+vedio/
+
 # 棋谱:仅保留示例
 *.afg
 !data/samples/*.afg

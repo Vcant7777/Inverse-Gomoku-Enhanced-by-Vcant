@@ -1,4 +1,4 @@
-"""启发式引擎版本调度测试:初级/中级/高级/地狱四档的统一入口。"""
+"""启发式引擎版本调度测试:初级/中级/高级/大师/传奇五档的统一入口。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,11 @@ def test_normalize_and_labels():
     assert hv.normalize("mid") == hv.VERSION_MID
     assert hv.normalize("advanced") == hv.VERSION_ADVANCED
     assert hv.normalize("hell") == hv.VERSION_HELL
-    assert hv.normalize("地狱") == hv.VERSION_HELL
+    assert hv.normalize("legend") == hv.VERSION_LEGEND
+    assert hv.normalize("地狱") == hv.VERSION_HELL      # 兼容旧显示名
+    assert hv.normalize("大师") == hv.VERSION_HELL
+    assert hv.normalize("master") == hv.VERSION_HELL
+    assert hv.normalize("传奇") == hv.VERSION_LEGEND
     assert hv.normalize("old") == hv.VERSION_BEGINNER     # 兼容旧值
     assert hv.normalize("new") == hv.VERSION_ADVANCED     # 兼容旧值
     assert hv.normalize(None) == hv.VERSION_ADVANCED
@@ -27,19 +31,23 @@ def test_normalize_and_labels():
     assert hv.label("beginner") == "初级"
     assert hv.label("mid") == "中级"
     assert hv.label("advanced") == "高级"
-    assert hv.label("hell") == "地狱"
+    assert hv.label("hell") == "大师"
+    assert hv.label("legend") == "传奇"
     assert hv.label("old") == "初级"
     assert hv.supports_vcf("beginner") is False
     assert hv.supports_vcf("mid") is True
     assert hv.supports_vcf("advanced") is True
     assert hv.supports_vcf("hell") is True
-    assert hv.VERSION_CHOICES == ("beginner", "mid", "advanced", "hell")
+    assert hv.supports_vcf("legend") is True
+    assert hv.VERSION_CHOICES == ("beginner", "mid", "advanced", "hell",
+                                  "legend")
 
 
 @pytest.mark.parametrize("version,use_vcf", [
     ("beginner", True), ("mid", True), ("mid", False),
     ("advanced", True), ("advanced", False),
-    ("hell", True), ("hell", False)])
+    ("hell", True), ("hell", False),
+    ("legend", True), ("legend", False)])
 def test_choose_and_analysis_dispatch(version, use_vcf):
     g = ReverseGomoku()
     rng = np.random.default_rng(0)
@@ -107,20 +115,22 @@ def test_choose_analysis_consistency():
                 assert val >= top_v - h.O_NOISE - 1e-9, \
                     f"choose(root_prune={rp}) 偏离 analysis: {mv} v={val} top={top_v}"
     # 冻结快照仍可加载(供 match_ai --old-module A/B)
-    from antifive.tools import heuristic_v6
+    from antifive.tools import heuristic_v6, heuristic_v7
     assert heuristic_v4.choose_heuristic_move is not None
     assert heuristic_v5.choose_heuristic_move is not None
     assert heuristic_v6.choose_heuristic_move is not None
+    assert heuristic_v7.choose_heuristic_move is not None
 
 
-def test_gui_engine_accepts_four_versions():
+def test_gui_engine_accepts_five_versions():
     pytest.importorskip("pygame")
     from antifive.gui import _HeuristicEngine
     g = ReverseGomoku()
     cases = (("beginner", True, False), ("beginner", False, False),
              ("mid", True, True), ("mid", False, False),
              ("advanced", True, True), ("advanced", False, False),
-             ("hell", True, True), ("hell", False, False))
+             ("hell", True, True), ("hell", False, False),
+             ("legend", True, True), ("legend", False, False))
     for version, vcf, expected_vcf in cases:
         eng = _HeuristicEngine(depth=1, time_budget=None,
                                version=version, use_vcf=vcf)
@@ -136,3 +146,16 @@ def test_advanced_snapshot_equals_v6_module():
     from antifive.tools import heuristic_v6
     assert hv._adv() is heuristic_v6
     assert hv.label("advanced") == "高级"
+
+
+def test_legend_snapshot_equals_v7_and_distill2_on():
+    """「传奇」= 冻结快照 v7,且 v2 蒸馏默认开启(数据缺失时自动退化)。"""
+    from antifive import distill2
+    from antifive import heuristic_versions as hv
+    from antifive.tools import heuristic_v7
+    assert hv._legend() is heuristic_v7
+    assert hv.label("legend") == "传奇"
+    assert heuristic_v7.USE_DISTILL2 is True
+    assert heuristic_v7._ACTIVE2 == distill2.ENABLED
+    assert heuristic_v7.choose_heuristic_move is not None
+    assert heuristic_v7.analysis_moves is not None

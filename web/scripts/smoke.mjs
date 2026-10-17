@@ -161,11 +161,19 @@ const tiers = await page.evaluate(() => {
   };
 });
 check(tiers.count === 3 && tiers.checked === 2 &&
-  tiers.labels.every((t) => !t.includes("地狱")),
-  "three difficulty tiers (no 地狱), default 困难");
-const versions = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('input[name="hver"]')).map((r) => r.value));
-check(versions.includes("hell"), "engine version list includes hell");
+  tiers.labels.every((t) => !t.includes("大师") && !t.includes("传奇")),
+  "three difficulty tiers (no engine versions), default 困难");
+const versionInputs = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('input[name="hver"]')).map((r) => ({
+    value: r.value,
+    label: r.closest("label")?.textContent ?? "",
+  })));
+const versions = versionInputs.map((v) => v.value);
+check(versions.length === 5 && versions.includes("hell") &&
+  versions.includes("legend") &&
+  versionInputs.some((v) => v.value === "hell" && v.label.includes("大师")) &&
+  versionInputs.some((v) => v.value === "legend" && v.label.includes("传奇")),
+  "five engine versions incl. 大师(hell)/传奇(legend)");
 
 await page.keyboard.press("e");
 await page.click('input[name="limit"][value="ai"]');
