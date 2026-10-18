@@ -792,12 +792,13 @@ export class App {
 
   private rebuildArrowStatic() {
     if (!this.state) return;
-    const { kinds, moves, pending } = this.state;
+    const { kinds, moves } = this.state;
+    // 回放到“占领步”或普通落子时，上一步的箭头可能还留在 this.arrow 里；
+    // 必须先清空，不能只在 pending < 0 时清，否则占领待安置状态会显示错位箭头。
+    this.arrow = null;
     const n = kinds.length;
     if (this.showArrows && n >= 2 && kinds[n - 1] === "place2") {
       this.arrow = { from: moves[n - 2], to: moves[n - 1], t0: null };
-    } else if (pending < 0) {
-      this.arrow = null;
     }
   }
 

@@ -3,7 +3,7 @@ import {
   BLACK, EMPTY, N, SIZE, WHITE, applyStep, createPosition,
   legalMoves, line5Map, other, pendingTargets, winnerOf,
 } from "./rules.ts";
-import type { Config, Position } from "./rules.ts";
+import type { Config, Position, Undo } from "./rules.ts";
 import { DEFAULT_CONFIG } from "./rules.ts";
 import { searchBest, clearTT, analyze } from "./search.ts";
 import { openingMove } from "./openbook.ts";
@@ -57,13 +57,15 @@ export class EngineSession {
     this.onProgress?.(nodes);
   };
 
-  private pushStep(idx: number): void {
+  private pushStep(u: Undo): void {
+    // 与 Python history 一致：记录该步“走之前”的状态，
+    // kinds 才能区分 capture(走后 pending 指向本步) 与 place2(走前 pending 指向本步)。
     this.steps.push({
-      idx,
-      player: this.pos.player,
-      pending: this.pos.pending,
-      turnCount: this.pos.turnCount,
-      whiteTurns: this.pos.whiteTurns,
+      idx: u.idx,
+      player: u.prevPlayer,
+      pending: u.prevPending,
+      turnCount: u.prevTurn,
+      whiteTurns: u.prevWhite,
     });
   }
 
@@ -77,8 +79,7 @@ export class EngineSession {
       const legal = legalMoves(this.pos, cfg);
       if (!legal.length) break;
       if (!legal.includes(m)) throw new Error(`棋谱第 ${this.steps.length + 1} 手非法`);
-      applyStep(this.pos, m, cfg);
-      this.pushStep(m);
+      this.pushStep(applyStep(this.pos, m, cfg));
     }
   }
 
@@ -99,11 +100,9 @@ export class EngineSession {
     const kills = killCaptures(this.pos, this.config);
     if (kills.length) {
       const [cap, place] = kills[0];
-      applyStep(this.pos, cap, this.config);
-      this.pushStep(cap);
+      this.pushStep(applyStep(this.pos, cap, this.config));
       if (!this.pos.gameOver) {
-        applyStep(this.pos, place, this.config);
-        this.pushStep(place);
+        this.pushStep(applyStep(this.pos, place, this.config));
       }
       if (this.pos.gameOver && !this.pos.isDraw) return true;
     }
@@ -196,8 +195,7 @@ export class EngineSession {
       }
       throw new Error(`非法着法 idx=${idx}`);
     }
-    applyStep(this.pos, idx, this.config);
-    this.pushStep(idx);
+    this.pushStep(applyStep(this.pos, idx, this.config));
     let finished = false;
     if (!this.pos.gameOver && !legalMoves(this.pos, this.config).length) {
       finished = this.finishStuck();
@@ -233,8 +231,7 @@ export class EngineSession {
     if (profile.supportsBook) {
       const book = openingMove(this.pos);
       if (book >= 0 && legalMoves(this.pos, this.config).includes(book)) {
-        applyStep(this.pos, book, this.config);
-        this.pushStep(book);
+        this.pushStep(applyStep(this.pos, book, this.config));
         return { state: this.state(), move: book, nodes: 0, elapsed: 0 };
       }
     }
@@ -254,8 +251,7 @@ export class EngineSession {
         onProgress: this.progress,
       });
       if (vcfMove >= 0) {
-        applyStep(this.pos, vcfMove, this.config);
-        this.pushStep(vcfMove);
+        this.pushStep(applyStep(this.pos, vcfMove, this.config));
         this.lastElapsed = (Date.now() - t0) / 1000;
         return { state: this.state(), move: vcfMove,
           nodes: this.lastNodes, elapsed: this.lastElapsed };
@@ -279,8 +275,7 @@ export class EngineSession {
       this.finishStuck();
       return { state: this.state(), move: null, nodes: this.lastNodes, elapsed: this.lastElapsed };
     }
-    applyStep(this.pos, result.move, this.config);
-    this.pushStep(result.move);
+    this.pushStep(applyStep(this.pos, result.move, this.config));
     return {
       state: this.state(), move: result.move,
       nodes: this.lastNodes, elapsed: this.lastElapsed,

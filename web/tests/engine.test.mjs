@@ -74,3 +74,26 @@ test("一步杀：pending 安置对方成五", () => {
   assert.equal(r.state.game_over, true);
   assert.equal(r.state.winner, BLACK);
 });
+
+test("棋谱 kinds/回放：占领步与安置步不错位", () => {
+  const s = new EngineSession();
+  s.handle({ cmd: "new" });
+  for (const m of [112, 113, 113]) s.handle({ cmd: "move", idx: m });
+  const cap = s.state();
+  assert.equal(cap.kinds.at(-1), "capture");
+  assert.equal(cap.pending, 113);
+  assert.equal(cap.moves.at(-1), 113);
+  const target = cap.legal[0];
+  s.handle({ cmd: "move", idx: target });
+  const placed = s.state();
+  assert.equal(placed.kinds.at(-1), "place2");
+  assert.deepEqual(placed.moves.slice(-2), [113, target]);
+  // 回放到安置完成：箭头应从占领点指向安置点
+  s.handle({ cmd: "goto", moves: placed.moves, pos: placed.moves.length });
+  assert.equal(s.state().kinds.at(-1), "place2");
+  assert.deepEqual(s.state().moves.slice(-2), [113, target]);
+  // 回放到占领步：最后一步是 capture，不应使用 moves[-2] 画箭头
+  s.handle({ cmd: "goto", moves: placed.moves, pos: 3 });
+  assert.equal(s.state().kinds.at(-1), "capture");
+  assert.equal(s.state().pending, 113);
+});
