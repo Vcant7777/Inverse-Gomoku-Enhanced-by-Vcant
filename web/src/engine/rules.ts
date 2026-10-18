@@ -5,6 +5,7 @@ export const WHITE = 2;
 export const EMPTY = 0;
 export const N = 15;
 export const SIZE = N * N;
+const WIN_AXES: ReadonlyArray<readonly [number, number]> = [[0, 1], [1, 0], [1, 1], [1, -1]];
 export const LOSS_START_TURNS = 8;
 export const NO_PENDING = -1;
 
@@ -94,7 +95,7 @@ export function clonePosition(p: Position): Position {
 export function checkWinAt(board: Int8Array, idx: number, color: number): boolean {
   const r = (idx / N) | 0;
   const c = idx - r * N;
-  for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]] as const) {
+  for (const [dr, dc] of WIN_AXES) {
     let count = 1;
     let nr = r + dr;
     let nc = c + dc;
@@ -182,8 +183,8 @@ export function legalMoves(pos: Position, config: Config): number[] {
   }
 
   if (config.mask_suicide && turnCount >= config.loss_start_turns) {
-    const l5 = line5Map(board, player);
-    return out.filter((i) => l5[i] === 0).sort((a, b) => a - b);
+    // 只需要过滤 out 中真正可走的格子；不必全盘生成 line5 map。
+    return out.filter((i) => !checkWinAt(board, i, player)).sort((a, b) => a - b);
   }
   return out.sort((a, b) => a - b);
 }

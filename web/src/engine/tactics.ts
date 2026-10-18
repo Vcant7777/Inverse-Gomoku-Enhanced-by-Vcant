@@ -1,6 +1,6 @@
 /** 逆五子棋战术层：安置杀、占领+安置两步杀、跳形延伸。 */
 import {
-  DEFAULT_CONFIG, EMPTY, N, checkWinAt, legalMoves, line5Map, other,
+  DEFAULT_CONFIG, EMPTY, N, checkWinAt, legalMoves, other,
 } from "./rules.ts";
 import type { Config } from "./rules.ts";
 import type { Position } from "./rules.ts";
@@ -14,12 +14,13 @@ export interface KillPair {
 }
 
 /** 与 Python tactics.kill_placements 等价：需要 config 判断判负窗口。 */
-export function killPlacementsConfig(pos: Position, lossStart: number): number[] {
+export function killPlacementsConfig(pos: Position, lossStart: number, legalInput?: number[]): number[] {
   if (pos.pending < 0 || pos.turnCount < lossStart) return [];
   const opp = other(pos.player);
-  return legalMoves(pos, {
+  const legal = legalInput ?? legalMoves(pos, {
     white_restrict_turns: 0, loss_start_turns: lossStart, mask_suicide: true,
-  }).filter((t) => checkWinAt(pos.board, t, opp));
+  });
+  return legal.filter((t) => checkWinAt(pos.board, t, opp));
 }
 
 /** 若在 (r,c) 落 color 子，经过该格的最大子数（允许一个空档）。 */
@@ -78,14 +79,23 @@ function capturePaths(board: Int8Array, ci: number): { target: number; route: nu
   return out;
 }
 
+/** 只计算空位上的 line5（killPairs 的目标只能是空位）。 */
+function line5Empty(board: Int8Array, color: number): Uint8Array {
+  const out = new Uint8Array(N * N);
+  for (let i = 0; i < N * N; i++) {
+    if (board[i] === EMPTY && checkWinAt(board, i, color)) out[i] = 1;
+  }
+  return out;
+}
+
 /** 全部两步杀对（占领 idx、安置 idx、封堵 route）。 */
-export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG): KillPair[] {
+export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array, skip?: boolean): KillPair[] {
   const board = pos.board;
   const p = pos.player;
-  if (pos.pending >= 0 || pos.turnCount < config.loss_start_turns) return [];
-  const legal = legalMoves(pos, config);
+  if (skip || pos.pending >= 0 || pos.turnCount < config.loss_start_turns) return [];
+  const legal = legalInput ?? legalMoves(pos, config);
   const opp = other(p);
-  const l5 = line5Map(board, opp);
+  const l5 = l5Input ?? line5Empty(board, opp);
   const danger: number[] = [];
   for (let i = 0; i < N * N; i++) if (l5[i]) danger.push(i);
   if (!danger.length) return [];
@@ -129,10 +139,10 @@ export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG): KillP
 }
 
 /** 两步杀：每个占领格只取第一个安置点。 */
-export function killCaptures(pos: Position, config: Config = DEFAULT_CONFIG): [number, number][] {
+export function killCaptures(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array, skip?: boolean): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const k of killPairs(pos, config)) {
+  for (const k of killPairs(pos, config, legalInput, l5Input, skip)) {
     if (seen.has(k.capture)) continue;
     seen.add(k.capture);
     out.push([k.capture, k.target]);

@@ -209,7 +209,7 @@ export function searchBest(
 
     const legal = legalMoves(pos, config);
     const [k1, k2] = killers[depth & 63];
-    const cands = candidates(pos, config, innerLimit(depth), false, null, history, oppLast);
+    const cands = candidates(pos, config, innerLimit(depth), false, null, history, oppLast, legal);
     includeExtras(cands, [ttMove, k1, k2], legal);
     if (!cands.length) {
       if (boardFull(pos.board)) return 0;
@@ -291,8 +291,9 @@ export function searchBest(
     aborted = false;
     let localBest = -INF;
     let localMove = bestMove;
-    const list = candidates(root, config, 8, true, 8);
-    const ordered = list.length ? list.map((x) => x.move) : legalMoves(root, config);
+    const rootLegal = legalMoves(root, config);
+    const list = candidates(root, config, 8, true, 8, null, -1, rootLegal);
+    const ordered = list.length ? list.map((x) => x.move) : rootLegal;
     if (bestMove >= 0) {
       const at = ordered.indexOf(bestMove);
       if (at > 0) { ordered.splice(at, 1); ordered.unshift(bestMove); }

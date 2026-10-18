@@ -59,7 +59,7 @@ export interface Four {
   ends: number[];
 }
 
-interface Features {
+export interface Features {
   black: Mat;
   white: Mat;
   dangBlack: Set<number>;
@@ -210,13 +210,13 @@ const E_ADJ = 0.02, E_CENTER_OPP = 0.70, E_CENTER_SELF = 0.80, E_CLUSTER = 0.03;
 export const MATE = 1_000_000;
 
 /** 从 pos.player 视角评估。distill=1/2 时叠加 KataGo 价值校正。 */
-export function evaluate(pos: Position, config: Config, distill: DistillMode = 0): number {
+export function evaluate(pos: Position, config: Config, distill: DistillMode = 0, feat?: Features): number {
   if (pos.gameOver) {
     if (pos.isDraw) return 0;
     return pos.loser === pos.player ? -MATE : MATE;
   }
   const me = pos.player;
-  const f = features(pos, config);
+  const f = feat ?? features(pos, config);
   const mine = me === BLACK ? f.black : f.white;
   const theirs = me === BLACK ? f.white : f.black;
   const dangerCnt = me === BLACK ? f.dangWhite.size : f.dangBlack.size;

@@ -79,15 +79,15 @@ function center(idx: number): number {
   return 1 - Math.max(Math.abs(r - 7), Math.abs(c - 7)) / 7;
 }
 
-interface Threats { ends: Set<number>; route: Set<number>; killable: boolean }
+interface Threats { ends: Set<number>; route: Set<number>; killable: boolean; oppFours: number | null }
 
 export function threats(pos: Position, config: Config): Threats {
   const ends = new Set<number>();
   const route = new Set<number>();
-  if (pos.turnCount < config.loss_start_turns) return { ends, route, killable: false };
+  if (pos.turnCount < config.loss_start_turns) return { ends, route, killable: false, oppFours: null };
   const opp = other(pos.player);
   if (opp === 2 && pos.whiteTurns < config.white_restrict_turns) {
-    return { ends, route, killable: false };
+    return { ends, route, killable: false, oppFours: null };
   }
   const f = features(pos, config);
   const mine = pos.player === 1 ? f.black : f.white;
@@ -115,7 +115,7 @@ export function threats(pos: Position, config: Config): Threats {
       }
     }
   }
-  return { ends, route, killable: mine.killable4 > 0 };
+  return { ends, route, killable: mine.killable4 > 0, oppFours: (opp === 1 ? f.foursBlack : f.foursWhite).length };
 }
 
 export function placeTargets(board: Int8Array, capture: number): number[] {
@@ -134,10 +134,10 @@ export function placeTargets(board: Int8Array, capture: number): number[] {
   return out;
 }
 
-function placementScore(board: Int8Array, idx: number, self: number): number {
+function placementScore(idx: number, self: number, stat: (i: number, c: number) => Stats): number {
   const opp = other(self);
-  const s = statsAt(board, idx, opp);
-  const m = statsAt(board, idx, self);
+  const s = stat(idx, opp);
+  const m = stat(idx, self);
   let v = s.lt >= 5 ? O_KILL : s.lt === 4 ? O_BUILD4 : s.lt === 3 ? O_BUILD3 : 0;
   v += s.nb * O_PUSH_OPP + center(idx) * O_PUSH_CENTER - m.nb * O_PUSH_SELF;
   if (m.lt >= 4) v += O_BLOCK_SELF4;
@@ -153,18 +153,25 @@ function sortCandidates(out: Candidate[]): Candidate[] {
 }
 
 function selectTop<T>(items: T[], key: (x: T) => number, k: number): T[] {
-  return items
-    .map((x) => [key(x), x] as const)
-    .sort((a, b) => b[0] - a[0])
-    .slice(0, Math.max(0, k))
-    .map((x) => x[1]);
+  const n = Math.min(Math.max(0, k), items.length);
+  if (n === 0) return [];
+  const top: T[] = [];
+  for (const x of items) {
+    const kx = key(x);
+    if (top.length === n && kx <= key(top[n - 1])) continue;
+    let at = top.length;
+    while (at > 0 && key(top[at - 1]) < kx) at--;
+    top.splice(at, 0, x);
+    if (top.length > n) top.pop();
+  }
+  return top;
 }
 
-function appendDiversity(out: Candidate[], legal: number[], board: Int8Array, self: number): void {
+function appendDiversity(out: Candidate[], legal: number[], self: number, stat: (i: number, c: number) => Stats): void {
   const present = new Set(out.map((x) => x.move));
   const pool = legal.filter((m) => !present.has(m));
   if (!pool.length) return;
-  const scored = pool.map((m) => [statsAt(board, m, self).nb, m] as const);
+  const scored = pool.map((m) => [stat(m, self).nb, m] as const);
   scored.sort((a, b) => b[0] - a[0]);
   for (const [nb, m] of scored.slice(0, 2)) out.push({ score: nb * 1e-3, move: m });
 }
@@ -177,13 +184,22 @@ export function candidates(
   coreK: number | null = null,
   history: Float64Array | null = null,
   oppLast = -1,
+  legalInput?: number[],
 ): Candidate[] {
   const kk = coreK === null ? k : Math.min(coreK, k);
   const self = pos.player;
   const opp = other(self);
   const board = pos.board;
-  const legal = legalMoves(pos, config);
+  const legal = legalInput ?? legalMoves(pos, config);
   if (!legal.length) return [];
+  const statsB: Array<Stats | undefined> = new Array(225);
+  const statsW: Array<Stats | undefined> = new Array(225);
+  const stat = (idx: number, color: number): Stats => {
+    const arr = color === 1 ? statsB : statsW;
+    let v = arr[idx];
+    if (v === undefined) { v = statsAt(board, idx, color); arr[idx] = v; }
+    return v;
+  };
   const out: Candidate[] = [];
   const th = threats(pos, config);
   const hist = (m: number): number => history ? Math.min(history[m], 10000) * 0.05 : 0;
@@ -196,7 +212,7 @@ export function candidates(
   };
 
   if (pos.pending >= 0) {
-    const kills = killPlacementsConfig(pos, config.loss_start_turns);
+    const kills = killPlacementsConfig(pos, config.loss_start_turns, legal);
     if (kills.length) {
       return kills.map((m) => ({ score: O_KILL, move: m })).sort((a, b) => b.move - a.move);
     }
@@ -206,16 +222,16 @@ export function candidates(
     }
     const rest = legal.filter((m) => !th.ends.has(m) && !th.route.has(m));
     const scored = rest.map((m) => {
-      const sc = placementScore(board, m, self);
-      const snb = statsAt(board, m, self).nb + statsAt(board, m, opp).nb;
+      const sc = placementScore(m, self, stat);
+      const snb = stat(m, self).nb + stat(m, opp).nb;
       return { score: sc, key: sc + snb * 1e-4, move: m };
     });
     for (const x of selectTop(scored, (x) => x.key + hist(x.move), kk)) out.push({ score: x.score, move: x.move });
-    if (diversity) appendDiversity(out, legal, board, self);
+    if (diversity) appendDiversity(out, legal, self, stat);
     return finish();
   }
 
-  const kc = killCaptures(pos, config);
+  const kc = killCaptures(pos, config, legal, undefined, th.oppFours === 0);
   const killCells = new Set(kc.map((x) => x[0]));
   if (killCells.size) {
     for (const m of killCells) out.push({ score: O_KILL, move: m });
@@ -239,8 +255,8 @@ export function candidates(
   const empties = rest.filter((m) => board[m] === EMPTY);
   const caps = rest.filter((m) => board[m] !== EMPTY);
   const emptyScored = empties.map((m) => {
-    const s = statsAt(board, m, self);
-    const o = statsAt(board, m, opp);
+    const s = stat(m, self);
+    const o = stat(m, opp);
     const base = (s.lt >= 4 ? O_OWN4 : s.lt === 3 ? O_OWN3 : 0)
       + o.nb * O_FIGHT - s.nb;
     return { score: base, key: base - m * 1e-9, move: m };
@@ -248,19 +264,19 @@ export function candidates(
   for (const x of selectTop(emptyScored, (x) => x.key + hist(x.move), kk)) out.push({ score: x.score, move: x.move });
 
   const capScored = caps.map((m) => {
-    const s = statsAt(board, m, self);
-    const o = statsAt(board, m, opp);
+    const s = stat(m, self);
+    const o = stat(m, opp);
     let sc = s.lt >= 4 ? O_OWN4 : s.lt === 3 ? O_OWN3 : 0;
     sc += o.lt >= 4 ? O_BREAK4 : o.lt === 3 ? O_BREAK3 : 0;
     let best = -Infinity;
     for (const t of placeTargets(board, m)) {
-      const v = placementScore(board, t, self);
+      const v = placementScore(t, self, stat);
       if (v > best) best = v;
     }
     if (best > -Infinity) sc += best;
     return { score: sc, key: sc - m * 1e-9, move: m };
   });
   for (const x of selectTop(capScored, (x) => x.key + hist(x.move), kk)) out.push({ score: x.score, move: x.move });
-  if (diversity) appendDiversity(out, legal, board, self);
+  if (diversity) appendDiversity(out, legal, self, stat);
   return finish();
 }
