@@ -238,7 +238,7 @@ export function candidates(
     return finish();
   }
 
-  const kc = killCaptures(pos, config, legal, undefined, th.oppFours === 0);
+  const kc = killCaptures(pos, config, legal);
   const killCells = new Set(kc.map((x) => x[0]));
   if (killCells.size) {
     for (const m of killCells) out.push({ score: O_KILL, move: m });

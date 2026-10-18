@@ -89,10 +89,10 @@ function line5Empty(board: Int8Array, color: number): Uint8Array {
 }
 
 /** 全部两步杀对（占领 idx、安置 idx、封堵 route）。 */
-export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array, skip?: boolean): KillPair[] {
+export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array): KillPair[] {
   const board = pos.board;
   const p = pos.player;
-  if (skip || pos.pending >= 0 || pos.turnCount < config.loss_start_turns) return [];
+  if (pos.pending >= 0 || pos.turnCount < config.loss_start_turns) return [];
   const legal = legalInput ?? legalMoves(pos, config);
   const opp = other(p);
   const l5 = l5Input ?? line5Empty(board, opp);
@@ -139,10 +139,10 @@ export function killPairs(pos: Position, config: Config = DEFAULT_CONFIG, legalI
 }
 
 /** 两步杀：每个占领格只取第一个安置点。 */
-export function killCaptures(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array, skip?: boolean): [number, number][] {
+export function killCaptures(pos: Position, config: Config = DEFAULT_CONFIG, legalInput?: number[], l5Input?: Uint8Array): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const k of killPairs(pos, config, legalInput, l5Input, skip)) {
+  for (const k of killPairs(pos, config, legalInput, l5Input)) {
     if (seen.has(k.capture)) continue;
     seen.add(k.capture);
     out.push([k.capture, k.target]);
