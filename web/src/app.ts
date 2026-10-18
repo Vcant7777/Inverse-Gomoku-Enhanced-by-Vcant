@@ -508,6 +508,8 @@ export class App {
     const prev = this.state;
     if (!prev) return;
     this.thinking = true;
+    // 对方一开始思考就撤掉上一手留下的移子箭头，避免整段思考期间残留。
+    this.arrow = null;
     this.nodes = 0;
     this.hiddenDuringThink = 0;
     this.suspendedDuringThink = false;
@@ -574,7 +576,9 @@ export class App {
     this.confirmIdx = null;
     if (prev.pending >= 0 && moveIdx !== null) {
       this.arrow = { from: prev.pending, to: moveIdx, t0: performance.now() };
-    } else if (next.pending < 0) {
+    } else {
+      // 对手开始下一步（普通落子或占领）时，上一步的移子箭头应立即消失；
+      // 只有“自己完成安置”这一分支才保留/重建箭头。
       this.arrow = null;
     }
     if (moveIdx !== null) {
@@ -673,6 +677,7 @@ export class App {
     }
     if (!this.confirmGate(idx)) return;
     const prev = this.state;
+    this.arrow = null;               // 人类开始行动，上一手移子箭头立即撤掉
     this.humanPrevState = prev;      // 悔棋乐观回退用:人类上一手之前的局面
     const epoch = ++this.epoch;
     try {
