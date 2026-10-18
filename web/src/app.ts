@@ -18,10 +18,6 @@ const TIERS: Tier[] = [
   { name: "困难", depth: 8 },
 ];
 
-// 「不限时」下 AI 的兜底上限(秒):防浏览器端完整深度搜索卡死(Pyodide 无抢占);
-// 引擎到点会中止并返回上一层完整结果。桌面 `--limit none` 无此上限。
-const NO_LIMIT_FALLBACK_SECONDS = 180;
-
 const VERSION_LABELS: Record<string, string> = {
   beginner: "初级", mid: "中级", advanced: "高级", hell: "大师", legend: "传奇",
 };
@@ -122,10 +118,7 @@ export class App {
     this.engine = new Engine(base);
     this.engine.onStatus = (s) => {
       const texts: Record<string, string> = {
-        core: "正在加载 Pyodide 运行时…",
-        numpy: "正在加载 numpy…",
-        engine: "正在加载规则引擎…",
-        fallback: "资源源不可用，切换备用源…",
+        engine: "正在加载 TypeScript 引擎…",
       };
       $("loading-text").textContent = texts[s.stage] ?? "正在加载…";
       $("loading-detail").textContent = s.detail ?? "";
@@ -510,7 +503,8 @@ export class App {
   private async runAi(retry = 0) {
     const epoch = this.epoch;
     const tier = TIERS[this.tier];
-    const budget = this.limitMode === "ai" ? this.limitSeconds : NO_LIMIT_FALLBACK_SECONDS;
+    // 读秒模式传墙钟预算;「不限时」传 0,引擎按难度深度完整搜索,不做动态加深。
+    const budget = this.limitMode === "ai" ? this.limitSeconds : 0;
     const prev = this.state;
     if (!prev) return;
     this.thinking = true;
@@ -524,7 +518,7 @@ export class App {
       const res = await this.engine.call<AiResult>(
         "ai",
         { depth: tier.depth, budget, engine: this.hver, vcf: this.hvcf },
-        Math.round((budget + 120) * 1000),
+        Math.round((budget + 300) * 1000),
       );
       if (epoch !== this.epoch) return;
       // 切屏/锁屏期间 Worker 被系统挂起(搜索心跳中断):时间预算被空烧,

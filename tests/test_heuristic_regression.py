@@ -489,3 +489,29 @@ def test_defensive_filter_keeps_mate_distance_order(monkeypatch):
                                     CFG, 0.5)
     assert out[0][0] == safe[0]
     assert out[0][1] == h._loss_value(1) > mate[1]
+
+
+# --------------------------------------------------- 缓存/预计算路径一致性
+def test_cached_features_and_legal_mask_consistent():
+    """特征缓存与相邻空位预计算不得改变结果(随机棋盘,含待落子回合)。"""
+    from antifive import heuristic as H
+
+    rng = np.random.default_rng(1234)
+    for _ in range(40):
+        board = rng.integers(0, 3, size=(BOARD_SIZE, BOARD_SIZE)).astype(np.int8)
+        player = int(rng.choice([B, W]))
+        pending = int(rng.choice([-1, -1, int(rng.integers(0, 225))]))
+        tc = int(rng.integers(8, 60))
+        wt = int(rng.integers(0, 40))
+
+        first = H._board_features(board, wt, tc, CFG)
+        H._FEAT_CACHE.clear()
+        second = H._board_features(board, wt, tc, CFG)
+        assert first == second
+
+        lt_b, lt_w, nb_b, nb_w, _lt2_b, _lt2_w = H._line_maps_combo(board)
+        nbe = H._DEGREE - nb_b - nb_w
+        m0 = ReverseGomoku.legal_mask_for(board, player, pending, wt, CFG, tc)
+        m1 = ReverseGomoku.legal_mask_for(
+            board, player, pending, wt, CFG, tc, pre_nb_empty=nbe)
+        assert np.array_equal(m0, m1)

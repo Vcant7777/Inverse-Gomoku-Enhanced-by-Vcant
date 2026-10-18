@@ -1,6 +1,5 @@
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
-const CACHE = `antifive-pyodide-${VERSION}`;
-const MIRROR_HOSTS = ["cdn.npmmirror.com", "cdn.jsdelivr.net", "fastly.jsdelivr.net"];
+const CACHE = `antifive-web-${VERSION}`;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -25,21 +24,8 @@ function cacheFirst(request) {
   });
 }
 
-async function networkFirst(request) {
-  const cache = await caches.open(CACHE);
-  try {
-    const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
-    return response;
-  } catch (error) {
-    const hit = await cache.match(request);
-    if (hit) return hit;
-    throw error;
-  }
-}
-
 // GitHub Pages 无法自定义响应头:由 SW 给文档响应补 COOP/COEP,
-// 启用跨源隔离(SharedArrayBuffer),使 Pyodide 可被中断(悔棋即时生效)。
+// 启用跨源隔离(SharedArrayBuffer),使 Worker 搜索可被中断(悔棋即时生效)。
 async function withIsolationHeaders(request, extra) {
   // 文档与 Worker 脚本一律绕过 HTTP 缓存:GitHub Pages 对 HTML 有 max-age,
   // 否则新部署后用户可能长时间看到旧页面(例如看不到新增的难度档)。
@@ -70,14 +56,6 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(withIsolationHeaders(event.request, { "Cross-Origin-Resource-Policy": "same-origin" }));
     return;
   }
-  const mirror = MIRROR_HOSTS.includes(url.hostname);
-  if (!sameOrigin && !mirror) return;
-  if (sameOrigin && !url.pathname.endsWith("/antifive.whl") && !url.pathname.includes("/pyodide/")) {
-    return;
-  }
-  if (url.pathname.endsWith("/antifive.whl")) {
-    event.respondWith(networkFirst(event.request));
-    return;
-  }
+  if (!sameOrigin) return;
   event.respondWith(cacheFirst(event.request));
 });

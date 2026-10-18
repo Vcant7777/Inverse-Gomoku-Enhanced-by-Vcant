@@ -75,17 +75,18 @@ weights. All code is MIT-licensed and heavily AI-generated.
 
 **https://guijixzh.github.io/Inverse-Gomoku-GUI-vs-AI/**
 
-- 实现方式:Pyodide(WASM)在 Web Worker 中直接运行本仓库的 numpy 规则引擎与启发式 AI,
-  前端为 TypeScript + Canvas 静态站,托管在 GitHub Pages;
-- 首次打开需下载运行环境(约 10-20MB),之后访问走 Service Worker 缓存;
-  三档难度对应启发式深度 2 / 4 / 8,默认「困难」(深度 8);
-  限时设置默认「AI 读秒 15 秒」,可自定义每步秒数;「不限时」= 按深度完整搜索
-  (网页内置 180 秒/步兜底上限,防浏览器端长搜索卡死;桌面版无此上限);
-- 「设定」可切换**引擎版本**(初级经典 / 中级强化 / 高级+蒸馏 / 大师防守强化 /
-  传奇(+蒸馏v2),默认高级)与 **VCF 强制杀链**(中级/高级/大师/传奇生效);
-  「大师」「传奇」是引擎版本(困难之上的强度档,可与任意搜索深度搭配),
-  不放进难度档,避免重复入口互相覆盖;
-  各档等时对拍呈清晰梯度(高级对中级 82%、中级对初级 88%、高级对初级 98%,各 96 局;大师档 Elo 见下文);
+- 实现方式:规则、评估与 alpha-beta 搜索全部为 TypeScript 原生实现,运行在 Web Worker,
+  前端为 TypeScript + Canvas 静态站,托管在 GitHub Pages;不再加载 Pyodide/numpy;
+- 构建产物约 90KB(JS/CSS/HTML),首次打开无需下载运行时,Service Worker 继续负责
+  跨源隔离与资源缓存;Chrome 实测约 3-10 万节点/秒(含 VCF/蒸馏/候选裁剪),
+  较 Pyodide 版约 2.3k 节点/秒提升约 13-40 倍(单节点成本口径);
+  三档难度对应搜索深度 2 / 4 / 8,默认「困难」(深度 8);
+  限时设置默认「AI 读秒 15 秒」,可自定义每步秒数;「不限时」= 按难度深度完整搜索,
+  不做动态加深(避免浏览器端单步长时间占用);
+- 「设定」可切换**引擎版本**(初级经典 / 中级强化 / 高级 / 大师 / 传奇,默认高级);
+  网页版以搜索深度上限映射版本强度(初级 2、中级 4、高级 8、大师 +1、传奇 +2),
+  与难度档叠加;已移植 Python 的多层 VCF 强制杀链、蒸馏 v1/v2 价值校正与五档
+  能力差异;各版本 Elo 尚待长期自对弈校准;
 - 「设定」可调**白棋禁推手数**(平衡规则:白棋前 N 手禁止推子,默认 2,
   改 0 即白棋无禁推,对下一局生效)与复盘**自动播放**每手间隔;
 - 功能对齐 pygame GUI:落子/占领/安置、危险提示、手数、移子箭头、辅助射线、
@@ -93,24 +94,21 @@ weights. All code is MIT-licensed and heavily AI-generated.
   人机/人人/机机模式与全部快捷键;
 - 浏览器内无法运行 KataGo 与 torch 权重,网页版仅提供启发式 AI;需要 KataGo 请用桌面版。
 
-### 国内访问加速(镜像)
+### 本地开发与构建
 
-Pyodide 运行时(约 13MB,占首次加载的大头)默认从 **阿里云 npmmirror CDN**
-(`cdn.npmmirror.com`)加载,失败时自动回退本地/ jsDelivr,无需任何配置;
-可用环境变量 `VITE_PYODIDE_SOURCE=mirror|local|cdn` 指定优先源(默认生产 `mirror`、
-开发 `local`)。Service Worker 会缓存镜像资源,二次访问不再下载。
-numpy 与自研引擎 wheel(约 3MB)仍走本站;如需进一步整站加速(可选),
-把 `web/dist` 上传到任意静态托管(如 OSS/COS)即可,产物完全静态。
-
-本地开发(需要 Node.js 20+ 与 Python 3.10+,自动构建纯 Python wheel 并准备 Pyodide 资源):
+网页版为纯静态 TypeScript 工程,不再需要 Python/wheel/Pyodide 资源:
 
 ```bash
 cd web
 npm install
 npm run dev      # 本地开发服务器
-npm run build    # 静态产物在 web/dist
+npm run build    # 静态产物在 web/dist(约 90KB)
+npm test         # Node 规则/API 单元测试
 npm run smoke    # 构建后浏览器冒烟测试(需本机 Chrome/Edge)
+npm run bench    # 构建后浏览器搜索性能基准
 ```
+
+架构与对拍/性能细节见 [`docs/web-engine.md`](docs/web-engine.md)。
 
 部署:push 到 `main` 后由 `.github/workflows/pages.yml` 自动构建发布到 GitHub Pages;
 使用自定义域名或用户主页(`<user>.github.io`)时,把工作流里的 `VITE_BASE` 改为 `/`。
@@ -221,7 +219,7 @@ Python 缺少依赖,可先运行 `python scripts/setup_env.py --install` 一键�
 
 启动后点「设定」可随时更换引擎与参数。桌面默认:**深度 8 + AI 每步读秒 12 秒**
 (与网页困难档的搜索深度一致,五档引擎版本通用);网页默认读秒(15 秒,「不限时」
-= 完整搜索,180 秒/步兜底);启发式 AI 可切换**引擎版本**
+= 按难度深度完整搜索);启发式 AI 可切换**引擎版本**
 (**初级**经典 / **中级**强化(修复+开局库) / **高级**+蒸馏(默认) /
 **大师**防守强化(深化 VCF+严格时限预算+时限动态加深) /
 **传奇**(大师 + KataGo 蒸馏 v2 默认开启))与
@@ -330,14 +328,14 @@ Elo(以初级为 1000 基准,相对值而非绝对棋力;档间差距随时限�
 - 桌面:「高级 + VCF 开」、深度 8、AI 每步读秒 12s;命令行
   `--heuristic-version/--heuristic-depth/--ai-time/--no-vcf` 可改;
 - 网页:同样默认「高级 + VCF 开」,三档难度 = 深度 2/4/8,默认 AI 读秒 15s,
-  「不限时」按深度完整搜索(浏览器 180s/步兜底);
+  「不限时」按难度深度完整搜索,不做动态加深;
 - 参数:`ANTIFIVE_TT_BITS` 置换表位宽(默认 21,网页等低内存环境可设 19-20)、
   `ANTIFIVE_VCF=0`/`ANTIFIVE_VCF_DEPTH`(杀链开关/深度,默认 8;基础预算
   `ANTIFIVE_VCF_BUDGET` 0.05s,限时按剩余预算 5% 放宽、上限 0.6s)、
   `ANTIFIVE_NO_BOOK=1`(关开局库)、`ANTIFIVE_VALUE_W`(蒸馏价值权重,默认 0.5)、
   `ANTIFIVE_PRIOR_W`(策略先验,默认 0=关)、`ANTIFIVE_NO_DISTILL=1`(关蒸馏)、
   `ANTIFIVE_NO_PARAMS=1`(不加载调优参数;调优参数内置在包内
-  `antifive/params.json`,随 wheel 分发——网页/Pyodide 与纯净安装都生效;
+  `antifive/params.json`,随 wheel 分发——桌面版与纯净安装都生效;
   桌面可放 `data/params.json`(param_tune 输出)或 `data/params_hell.json`
   覆盖,后者仅大师档优先读取,做参数隔离)、
   大师档开关:`ANTIFIVE_PREGIFT=1` / `ANTIFIVE_GIFT3=1`(P1/P2,默认关闭)、
@@ -396,11 +394,11 @@ Inverse-Gomoku-GUI-vs-AI/
 │   ├── record.py               # .afg 棋谱读写
 │   ├── gui.py                  # pygame 图形界面
 │   ├── cli.py                  # 命令行对战
-│   ├── web_api.py              # 网页版 JSON 接口(Pyodide 复用引擎与启发式 AI)
+│   ├── web_api.py              # 旧 Pyodide 网页接口(桌面/兼容保留)
 │   ├── paths.py                # 资源路径定位
 │   ├── training/               # 自对弈与训练
 │   └── tools/                  # 基准、对拍、诊断、参数调优
-├── web/                        # 网页版(Vite + TypeScript + Canvas + Pyodide)
+├── web/                        # 网页版(Vite + TypeScript + Canvas,原生 TS 引擎)
 ├── scripts/setup_env.py        # 环境自检与依赖自动安装(GPU/CPU 自适应)
 ├── config/                     # engines.json 与 gtp_test.cfg
 ├── data/                       # 调参/评估局面池、示例棋谱(调优参数覆盖可放此)

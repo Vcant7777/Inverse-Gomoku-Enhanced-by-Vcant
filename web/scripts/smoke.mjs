@@ -228,9 +228,17 @@ const ghost = await page.evaluate(() => ({
 check(ghost.on === true && ghost.idx !== null && ghost.count === 0,
   "confirm move: first click only fixes ghost");
 await page.mouse.click(cx, cy);
-await wait(() => window.__antifive.thinking === true, 30000, 50);
-const remain = await page.evaluate(() => (window.__antifive.deadline - performance.now()) / 1000);
-check(remain > 16 && remain <= 20.5, `limit seconds applied (${remain.toFixed(1)}s)`);
+// 开局库可能让 AI 立即应手;有读秒时才检查 deadline。
+const limit = await page.evaluate(() => ({
+  seconds: window.__antifive.limitSeconds,
+  thinking: window.__antifive.thinking,
+  remain: (window.__antifive.deadline - performance.now()) / 1000,
+}));
+check(limit.seconds === 20, "limit seconds applied");
+if (limit.thinking) {
+  check(limit.remain > 16 && limit.remain <= 20.5,
+    `limit deadline set (${limit.remain.toFixed(1)}s)`);
+}
 await wait(() => window.__antifive.state.move_count >= 2 && !window.__antifive.thinking, 120000);
 const afterAi = await page.evaluate(() => ({
   count: window.__antifive.state.move_count,

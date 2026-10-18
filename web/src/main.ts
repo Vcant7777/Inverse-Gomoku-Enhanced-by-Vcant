@@ -1,5 +1,5 @@
 import { App } from "./app";
-import { PYODIDE_VERSION } from "./version";
+import { WEB_VERSION } from "./version";
 import "./style.css";
 
 declare global {
@@ -17,7 +17,7 @@ async function ensureCrossOriginIsolation(): Promise<boolean> {
   if (window.crossOriginIsolated) return true;
   if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return true;
   try {
-    await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js?v=${PYODIDE_VERSION}`);
+    await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js?v=${WEB_VERSION}`);
     if (!navigator.serviceWorker.controller) {
       await new Promise<void>((resolve) => {
         const timer = window.setTimeout(resolve, 4000);

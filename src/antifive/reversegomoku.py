@@ -177,12 +177,19 @@ _RUNS_CACHE_LOCK = threading.Lock()
 RUNS_CACHE_MAX = 8192
 
 
+_LINE_IDX_ORTH = np.stack([LINE_IDX[OPP_DIR[d]] for d in (0, 1, 2, 3)])
+_LINE_IDX_DIAG = np.stack([LINE_IDX[OPP_DIR[d]] for d in (4, 5, 6, 7)])
+_LINE_BACK_ORTH = np.stack([LINE_BACK[OPP_DIR[d]] for d in (0, 1, 2, 3)])
+_LINE_BACK_DIAG = np.stack([LINE_BACK[OPP_DIR[d]] for d in (4, 5, 6, 7)])
+
+
 def fwd_run_lengths(mask: np.ndarray) -> np.ndarray:
     """mask: (15,15) bool → (8,15,15) int32
     runs[d, r, c] = 从 (r,c) 出发沿方向 d 连续为真的格子数(含自身,起点为假则 0)。
 
     实现:cumsum - cummax 公式天然给出"以 i 结尾的后向游程",对整条线做一次;
-    方向 d 的前向游程 ≡ 在反方向线(顺序取反)上的后向游程。"""
+    方向 d 的前向游程 ≡ 在反方向线(顺序取反)上的后向游程。
+    正交/对角两组各用一次三维 cumsum,替代逐方向 8 次小运算。"""
     key = np.ascontiguousarray(mask).tobytes()
     with _RUNS_CACHE_LOCK:
         cached = _RUNS_CACHE.get(key)
@@ -191,15 +198,14 @@ def fwd_run_lengths(mask: np.ndarray) -> np.ndarray:
             return cached[0]
     flat = np.ascontiguousarray(mask, dtype=np.int8).reshape(-1)
     out = np.zeros((MOVE_DIRS, BOARD_SIZE, BOARD_SIZE), dtype=np.int32)
-    for d in range(MOVE_DIRS):
-        op = OPP_DIR[d]
-        li, lb = LINE_IDX[op], LINE_BACK[op]
-        lm = np.where(li >= 0, flat[li], 0).astype(np.int32)   # (L,15) 0/1,沿 -d 排序
-        s = lm.cumsum(axis=1)
-        z = np.where(lm == 0, s, 0)
-        cm = np.maximum.accumulate(z, axis=1)
-        fwd = s - cm                                          # 反方向线上的后向游程
-        out[d] = fwd.reshape(-1)[lb].reshape(BOARD_SIZE, BOARD_SIZE)
+    for dirs, idx, lb in (( (0, 1, 2, 3), _LINE_IDX_ORTH, _LINE_BACK_ORTH),
+                          ((4, 5, 6, 7), _LINE_IDX_DIAG, _LINE_BACK_DIAG)):
+        lm = np.where(idx >= 0, flat[idx], 0).astype(np.int32)
+        cs = lm.cumsum(axis=2)
+        cm = np.maximum.accumulate(np.where(lm == 0, cs, 0), axis=2)
+        fwd = cs - cm
+        for k, d in enumerate(dirs):
+            out[d] = fwd[k].reshape(-1)[lb[k]].reshape(BOARD_SIZE, BOARD_SIZE)
     out.flags.writeable = False
     with _RUNS_CACHE_LOCK:
         if len(_RUNS_CACHE) >= RUNS_CACHE_MAX:
@@ -231,12 +237,31 @@ def fwd_run_lengths_padded(mask: np.ndarray) -> np.ndarray:
     return padded
 
 
+_RUNS_PAD_BOARD_CACHE: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
+RUNS_PAD_BOARD_CACHE_MAX = 4096
+
+
+def runs_pad_for(board: np.ndarray, color: int) -> np.ndarray:
+    """按(棋盘字节, 颜色)缓存 fwd_run_lengths_padded,供合法掩码/线图共享。"""
+    key = (board.tobytes(), color)
+    with _RUNS_CACHE_LOCK:
+        cached = _RUNS_PAD_BOARD_CACHE.get(key)
+        if cached is not None:
+            _RUNS_PAD_BOARD_CACHE.move_to_end(key)
+            return cached
+    out = fwd_run_lengths_padded(board == color)
+    with _RUNS_CACHE_LOCK:
+        if len(_RUNS_PAD_BOARD_CACHE) >= RUNS_PAD_BOARD_CACHE_MAX:
+            _RUNS_PAD_BOARD_CACHE.popitem(last=False)
+        _RUNS_PAD_BOARD_CACHE[key] = out
+    return out
+
+
 def _line5_map_for(board: np.ndarray, color: int) -> np.ndarray:
     """(15,15) bool:在 (r,c) 落 color 子即连五的格子(不筛空格,含对方棋子位)。
     占领对方棋子格完成己方连五即用此判定(与 danger_map 同一公式,只是不滤空)。"""
-    runs = fwd_run_lengths(board == color)
     out = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=bool)
-    runs_pad = fwd_run_lengths_padded(board == color)
+    runs_pad = runs_pad_for(board, color)
     for d1, d2 in AXES_DIRS:
         dr1, dc1 = DIRECTIONS[d1]
         dr2, dc2 = DIRECTIONS[d2]
@@ -375,7 +400,8 @@ class ReverseGomoku:
     @staticmethod
     def legal_mask_for(board: np.ndarray, player: int, pending: int,
                        white_turns: int, config: GameConfig,
-                       turn_count: int = 0) -> np.ndarray:
+                       turn_count: int = 0,
+                       pre_nb_empty: np.ndarray | None = None) -> np.ndarray:
         """(ACTION_SIZE,) bool 合法动作掩码。静态版,任意状态可调。
         turn_count 用于判负窗口:窗口内连五不判负,自杀着不剔除。"""
         mask = np.zeros(ACTION_SIZE, dtype=bool)
@@ -400,13 +426,17 @@ class ReverseGomoku:
         if not ReverseGomoku._white_restricted(player, white_turns, config):
             opp = _other(player)
             opp_flat = (board.reshape(-1) == opp)
-            run_pad = fwd_run_lengths_padded(board == EMPTY)
-            has_target = np.zeros(PLACE_SIZE, dtype=bool)
-            for d in range(MOVE_DIRS):
-                dr, dc = DIRECTIONS[d]
-                sh = run_pad[d, 1 + dr:1 + dr + BOARD_SIZE,
-                             1 + dc:1 + dc + BOARD_SIZE].reshape(-1)  # 从邻位起连续空位长
-                has_target |= (sh >= 1)
+            if pre_nb_empty is not None:
+                # has_target 等价于"8 邻域至少一个空位";调用方已算好空邻数
+                has_target = pre_nb_empty.reshape(-1) > 0
+            else:
+                run_pad = fwd_run_lengths_padded(board == EMPTY)
+                has_target = np.zeros(PLACE_SIZE, dtype=bool)
+                for d in range(MOVE_DIRS):
+                    dr, dc = DIRECTIONS[d]
+                    sh = run_pad[d, 1 + dr:1 + dr + BOARD_SIZE,
+                                 1 + dc:1 + dc + BOARD_SIZE].reshape(-1)  # 从邻位起连续空位长
+                    has_target |= (sh >= 1)
             mask[:PLACE_SIZE] |= (opp_flat & has_target)
 
         # 自杀着剔除(判负生效后):落子/占领完成己方连五必败,一律剔除

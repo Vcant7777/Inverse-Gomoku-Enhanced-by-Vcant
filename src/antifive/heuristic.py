@@ -88,6 +88,8 @@ v3 优化(相对 tools/heuristic_v2.py 冻结快照):
 
 from __future__ import annotations
 
+from operator import itemgetter
+
 import argparse
 import json
 import os
@@ -103,7 +105,7 @@ from .paths import data_dir
 from .reversegomoku import (
     BLACK, BOARD_SIZE, DIRECTIONS, EMPTY, GameConfig, LINE_IDX, MOVE_DIRS,
     MOVE_DISTS, PLACE_SIZE, RAYS, ReverseGomoku, WHITE, check_win_at,
-    danger_map_for, fwd_run_lengths,
+    danger_map_for, fwd_run_lengths, runs_pad_for,
 )
 from . import distill
 from . import distill2
@@ -466,16 +468,23 @@ def _other(color: int) -> int:
     return WHITE if color == BLACK else BLACK
 
 
+# 8 邻域在棋盘内的实际邻居数(边界 3/5,内部 8),用于由 nb_b+nb_w 反推空邻数
+_DEGREE = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.uint8)
+for _dr in (-1, 0, 1):
+    for _dc in (-1, 0, 1):
+        if _dr == 0 and _dc == 0:
+            continue
+        _DEGREE[max(0, -_dr):BOARD_SIZE - max(0, _dr),
+                max(0, -_dc):BOARD_SIZE - max(0, _dc)] += 1
+
 _LINE_MAP_CACHE: "OrderedDict[bytes, tuple]" = OrderedDict()
 LINE_MAP_CACHE_MAX = 4096
 
 
-def _line_maps_combo(board: np.ndarray) -> tuple:
+def _line_maps_combo_full(board: np.ndarray) -> tuple:
     """双色线图一次算齐并按棋盘字节 LRU 缓存:
-    (lt_black, lt_white, nb_black, nb_white, lt2_black, lt2_white),均为 uint8(15x15)。
-    lt_color[t]:若在 t 落 color 子,经过 t 的最大连续数(空/占格均有效);
-    lt2_color[t]:同一计算下四轴线中的第二大连续数(用于识别双二/双活三构造);
-    nb_color[t]:t 的 8 邻域内 color 子数。"""
+    (lt_black, lt_white, nb_black, nb_white, lt2_black, lt2_white)。
+    lt 保持历史语义(供候选评分,不改行为)。"""
     key = board.tobytes()
     v = _LINE_MAP_CACHE.get(key)
     if v is not None:
@@ -512,6 +521,10 @@ def _line_maps_combo(board: np.ndarray) -> tuple:
         _LINE_MAP_CACHE.popitem(last=False)
     _LINE_MAP_CACHE[key] = res
     return res
+
+
+def _line_maps_combo(board: np.ndarray) -> tuple:
+    return _line_maps_combo_full(board)
 
 
 def _line_maps(board: np.ndarray, color: int) -> tuple:
@@ -686,6 +699,18 @@ _LINES4 = [[[int(x) for x in row if x >= 0] for row in LINE_IDX[d]]
            for d in (3, 1, 7, 6)]
 RAYS_LIST = RAYS.tolist()
 
+_LINE_SEQ = tuple(line for axis in _LINES4 for line in axis)
+
+
+def _make_line_getter(cells):
+    if len(cells) == 1:
+        i = cells[0]
+        return lambda flat: (flat[i],)
+    return itemgetter(*cells)
+
+
+_LINE_GETTERS = tuple(_make_line_getter(cells) for cells in _LINE_SEQ)
+
 _FEAT_CACHE: "OrderedDict[bytes, tuple]" = OrderedDict()
 FEAT_CACHE_MAX = 4096
 _EMPTY_FEAT = None
@@ -724,49 +749,48 @@ def _board_features(board: np.ndarray, white_turns: int,
     # 杀方能否移子:白受限则黑棋材料不可被杀
     cap_black = white_turns >= config.white_restrict_turns
     cap_white = True                            # 杀白棋的是黑,黑永不受限
-    for lines in _LINES4:
-        for line_cells in lines:
-            vals = [flat[i] for i in line_cells]
-            n = len(vals)
-            i = 0
-            while i < n:                        # 游程:(值, 起点, 终点)
-                j = i + 1
-                v = vals[i]
-                while j < n and vals[j] == v:
-                    j += 1
-                s, e = i, j
-                i = j
-                if v == 0:
-                    continue
-                L = e - s
-                is_black = v == BLACK
-                m = m_black if is_black else m_white
-                fours = fours_black if is_black else fours_white
-                dang = dang_black if is_black else dang_white
-                cap = cap_black if is_black else cap_white
-                l_open = s > 0 and vals[s - 1] == 0
-                r_open = e < n and vals[e] == 0
-                if L == 4:
-                    _tally_four(flat, line_cells, m, fours, dang, v, s, e,
-                                l_open, r_open, None, cap)
-                elif L == 3:
-                    if l_open and r_open:
-                        m["open3"] += 1
-                    else:
-                        m["closed3"] += 1
-                # 跳形:隔一个空位的同色连子(前段 + 空 + 后段)
-                if e + 2 < n and vals[e] == 0 and vals[e + 1] == v:
-                    j2 = e + 1
-                    while j2 < n and vals[j2] == v:
-                        j2 += 1
-                    total = L + (j2 - e - 1)
-                    if total >= 4:
-                        # ≥4 子带 1 空档(含 3+2/2+3 拆分的"五带缺"如 XXX_XX):
-                        # 填上空档即成连五,比四更致命,完成格=空档
-                        _tally_four(flat, line_cells, m, fours, dang, v, s, j2,
-                                    l_open, j2 < n and vals[j2] == 0, e, cap)
-                    elif total == 3:
-                        m["jump3"] += 1
+    for li, line_cells in enumerate(_LINE_SEQ):
+        vals = _LINE_GETTERS[li](flat)
+        n = len(vals)
+        i = 0
+        while i < n:                        # 游程:(值, 起点, 终点)
+            j = i + 1
+            v = vals[i]
+            while j < n and vals[j] == v:
+                j += 1
+            s, e = i, j
+            i = j
+            if v == 0:
+                continue
+            L = e - s
+            is_black = v == BLACK
+            m = m_black if is_black else m_white
+            fours = fours_black if is_black else fours_white
+            dang = dang_black if is_black else dang_white
+            cap = cap_black if is_black else cap_white
+            l_open = s > 0 and vals[s - 1] == 0
+            r_open = e < n and vals[e] == 0
+            if L == 4:
+                _tally_four(flat, line_cells, m, fours, dang, v, s, e,
+                            l_open, r_open, None, cap)
+            elif L == 3:
+                if l_open and r_open:
+                    m["open3"] += 1
+                else:
+                    m["closed3"] += 1
+            # 跳形:隔一个空位的同色连子(前段 + 空 + 后段)
+            if e + 2 < n and vals[e] == 0 and vals[e + 1] == v:
+                j2 = e + 1
+                while j2 < n and vals[j2] == v:
+                    j2 += 1
+                total = L + (j2 - e - 1)
+                if total >= 4:
+                    # ≥4 子带 1 空档(含 3+2/2+3 拆分的"五带缺"如 XXX_XX):
+                    # 填上空档即成连五,比四更致命,完成格=空档
+                    _tally_four(flat, line_cells, m, fours, dang, v, s, j2,
+                                l_open, j2 < n and vals[j2] == 0, e, cap)
+                elif total == 3:
+                    m["jump3"] += 1
     feats = (m_black, m_white, fours_black, fours_white,
              dang_black, dang_white)
     if len(_FEAT_CACHE) >= FEAT_CACHE_MAX:
@@ -845,18 +869,21 @@ def _positional_summary(board: np.ndarray) -> tuple:
         return v
     mb = (board == BLACK).astype(np.int32)
     mw = (board == WHITE).astype(np.int32)
-    adj_b = adj_w = 0
-    for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
-        adj_b += int((mb * _shift(mb, dr, dc)).sum())
-        adj_w += int((mw * _shift(mw, dr, dc)).sum())
-    nb_b = np.zeros_like(mb)
-    nb_w = np.zeros_like(mw)
-    for dr in (-1, 0, 1):
-        for dc in (-1, 0, 1):
-            if dr == 0 and dc == 0:
-                continue
-            nb_b += _shift(mb, dr, dc)
-            nb_w += _shift(mw, dr, dc)
+    # 双色叠成 (2,15,15),8 邻域用切片一次算完(越界补 0,与 _shift 等价)
+    m = np.stack((mb, mw))
+    nb = np.zeros_like(m)
+    nb[:, 1:, :] += m[:, :-1, :]
+    nb[:, :-1, :] += m[:, 1:, :]
+    nb[:, :, 1:] += m[:, :, :-1]
+    nb[:, :, :-1] += m[:, :, 1:]
+    nb[:, 1:, 1:] += m[:, :-1, :-1]
+    nb[:, :-1, :-1] += m[:, 1:, 1:]
+    nb[:, 1:, :-1] += m[:, :-1, 1:]
+    nb[:, :-1, 1:] += m[:, 1:, :-1]
+    nb_b, nb_w = nb[0], nb[1]
+    # 同色相邻对 = 8 邻域计数之和 / 2
+    adj_b = int((mb * nb_b).sum()) // 2
+    adj_w = int((mw * nb_w).sum()) // 2
     res = (adj_b, adj_w,
            float((mb * nb_b * CENTER_MAP).sum()),
            float((mw * nb_w * CENTER_MAP).sum()),
@@ -1164,17 +1191,20 @@ def _candidates(board: np.ndarray, player: int, pending: int, turn_count: int,
     核心宽度控制根宽(总候选 = 核心 + 先验/多样性/预防性防守等补充项)。"""
     kk = k if core_k is None else min(core_k, k)
     opp = _other(player)
+    flat = board.reshape(-1)
+    lt_b, lt_w, nb_b, nb_w, lt2_b, lt2_w = _line_maps_combo(board)
+    nbe = _DEGREE - nb_b - nb_w
+    lt_self = lt_b if player == BLACK else lt_w
     mask = ReverseGomoku.legal_mask_for(board, player, pending, white_turns,
-                                        config, turn_count)
+                                        config, turn_count,
+                                        pre_nb_empty=nbe)
     legal = np.nonzero(mask)[0]
     if out_legal is not None:
         out_legal.clear()
         out_legal.append(mask)
     if not legal.size:
         return []
-    flat = board.reshape(-1)
-    lt_b, lt_w, nb_b, nb_w, lt2_b, lt2_w = _line_maps_combo(board)
-    lt_self_f = (lt_b if player == BLACK else lt_w).reshape(-1)
+    lt_self_f = lt_self.reshape(-1)
     lt_opp_f = (lt_w if player == BLACK else lt_b).reshape(-1)
     lt2_opp_f = (lt2_w if player == BLACK else lt2_b).reshape(-1)
     nb_self_f = (nb_b if player == BLACK else nb_w).reshape(-1)
