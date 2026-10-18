@@ -141,6 +141,19 @@ function placementScore(idx: number, self: number, stat: (i: number, c: number) 
   return v;
 }
 
+function nbAt(board: Int8Array, idx: number, color: number): number {
+  const r = (idx / 15) | 0, c = idx % 15;
+  let n = 0;
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && board[nr * 15 + nc] === color) n++;
+    }
+  }
+  return n;
+}
+
 function sortCandidates(out: Candidate[]): Candidate[] {
   // Python `sorted(out, reverse=True)`：分值降序，同分 move 降序。
   return out.sort((a, b) => b.score - a.score || b.move - a.move);
@@ -250,9 +263,9 @@ export function candidates(
   const caps = rest.filter((m) => board[m] !== EMPTY);
   const emptyScored = empties.map((m) => {
     const s = stat(m, self);
-    const o = stat(m, opp);
+    const oNb = nbAt(board, m, opp);
     const base = (s.lt >= 4 ? O_OWN4 : s.lt === 3 ? O_OWN3 : 0)
-      + o.nb * O_FIGHT - s.nb;
+      + oNb * O_FIGHT - s.nb;
     return { score: base, key: base - m * 1e-9, move: m };
   });
   for (const x of selectTop(emptyScored, (x) => x.key + hist(x.move), kk)) out.push({ score: x.score, move: x.move });
