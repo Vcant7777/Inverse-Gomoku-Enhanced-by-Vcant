@@ -78,8 +78,8 @@ weights. All code is MIT-licensed and heavily AI-generated.
 - 实现方式:规则、评估与 alpha-beta 搜索全部为 TypeScript 原生实现,运行在 Web Worker,
   前端为 TypeScript + Canvas 静态站,托管在 GitHub Pages;不再加载 Pyodide/numpy;
 - 构建产物约 90KB(JS/CSS/HTML),首次打开无需下载运行时,Service Worker 继续负责
-  跨源隔离与资源缓存;Chrome 实测约 3-10 万节点/秒(含 VCF/蒸馏/候选裁剪),
-  较 Pyodide 版约 2.3k 节点/秒提升约 13-40 倍(单节点成本口径);
+  跨源隔离与资源缓存;Chrome 实测约 5-10 万节点/秒(含 VCF/蒸馏/候选裁剪),
+  较 Pyodide 版约 2.3k 节点/秒提升约 20-40 倍(单节点成本口径);
   三档难度对应搜索深度 2 / 4 / 8,默认「困难」(深度 8);
   限时设置默认「AI 读秒 15 秒」,可自定义每步秒数;「不限时」= 按难度深度完整搜索,
   不做动态加深(避免浏览器端单步长时间占用);

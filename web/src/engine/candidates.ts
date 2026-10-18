@@ -34,17 +34,6 @@ const DIRS8: ReadonlyArray<readonly [number, number]> = [
 // Python `_line_maps_combo_full` 的历史轴对：对角两条是交叉统计。
 const PAIRS: ReadonlyArray<readonly [number, number]> = [[0, 1], [2, 3], [4, 5], [6, 7]];
 
-function runFrom(board: Int8Array, r: number, c: number, dir: number, color: number): number {
-  let n = 0;
-  let nr = r, nc = c;
-  const [dr, dc] = DIRS8[dir];
-  while (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && board[nr * 15 + nc] === color) {
-    n++;
-    nr += dr; nc += dc;
-  }
-  return n;
-}
-
 interface Stats { lt: number; lt2: number; nb: number }
 
 function statsAt(board: Int8Array, idx: number, color: number): Stats {
@@ -53,11 +42,16 @@ function statsAt(board: Int8Array, idx: number, color: number): Stats {
   let first = 1, second = 1;
   for (const [d1, d2] of PAIRS) {
     const dr = DIRS8[d1][0], dc = DIRS8[d1][1];
-    const fr = r + dr, fc = c + dc;
-    const br = r - dr, bc = c - dc;
     let f = 0, b = 0;
-    if (fr >= 0 && fr < 15 && fc >= 0 && fc < 15) f = runFrom(board, fr, fc, d1, color);
-    if (br >= 0 && br < 15 && bc >= 0 && bc < 15) b = runFrom(board, br, bc, d2, color);
+    let nr = r + dr, nc = c + dc;
+    while (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && board[nr * 15 + nc] === color) {
+      f++; nr += dr; nc += dc;
+    }
+    const dr2 = DIRS8[d2][0], dc2 = DIRS8[d2][1];
+    nr = r - dr; nc = c - dc;
+    while (nr >= 0 && nr < 15 && nc >= 0 && nc < 15 && board[nr * 15 + nc] === color) {
+      b++; nr += dr2; nc += dc2;
+    }
     const run = 1 + f + b;
     if (run >= first) { second = first; first = run; }
     else if (run > second) second = run;
