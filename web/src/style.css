@@ -339,6 +339,7 @@ button.active {
   justify-content: center;
   z-index: 50;
   padding: 16px;
+  overflow-y: auto;
 }
 
 .modal-card {
@@ -346,6 +347,8 @@ button.active {
   border-radius: 14px;
   padding: 18px 22px 20px;
   width: min(430px, 94vw);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.32);
 }
 
@@ -401,6 +404,33 @@ button.active {
   border-radius: 6px;
   font-size: 14px;
   font-family: inherit;
+}
+
+/* AI 变化:自定义参数面板(仅「自定义」档可见,见 app.ts syncVarietyParams) */
+.variety-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 2px dashed #d9c3a1;
+  border-radius: 8px;
+  background: #fdf8f0;
+}
+
+.variety-params .seconds {
+  margin-top: 0;
+}
+
+.variety-params .seconds input {
+  width: 68px;
+}
+
+.variety-params .variety-hint {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8b7a62;
 }
 
 .modal-actions {

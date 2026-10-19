@@ -91,6 +91,13 @@ Play in the browser, no installation:
 - Settings can also adjust the **white-restriction turn count** (balance rule:
   White may not capture during its first N turns, default 2; 0 removes the
   restriction; applies to the next game) and the replay **auto-play** interval.
+- Settings expose **AI variation** (off / low / mid / high / custom, default mid): the
+  same position no longer always gets the same reply. `off` is strongest-move-every-time
+  (bit-for-bit identical to the previous build); proven wins/kills are never
+  randomised; variation is wider in the opening than in the middlegame; each game
+  gets its own seed (reproducible via `moves + seed`). `custom` exposes every knob
+  (T / value window / pool K / opening plies / book chance) and the engine clamps
+  out-of-range values.
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay

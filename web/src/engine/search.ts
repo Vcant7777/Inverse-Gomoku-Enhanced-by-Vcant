@@ -9,6 +9,8 @@ import { profileFor } from "./profiles.ts";
 import { candidates } from "./candidates.ts";
 import type { Candidate } from "./candidates.ts";
 import { jumpThrough } from "./tactics.ts";
+import { varietyAt } from "./variety.ts";
+import type { VarietySpec } from "./variety.ts";
 
 const INF = 2 * MATE;
 const now = (): number =>
@@ -21,6 +23,10 @@ export interface SearchOptions {
   onProgress?: (nodes: number) => void;
   interruptBuffer?: Int32Array | null;
   maxNodes?: number;
+  /** 变化(去固定化)档位;缺省/off = 完全确定性。 */
+  variety?: VarietySpec;
+  /** 配合 variety 的随机源(会话种子 RNG);缺省时不抽样。 */
+  rng?: () => number;
 }
 
 export interface SearchResult {
@@ -141,6 +147,40 @@ function boardFull(board: Int8Array): boolean {
   return true;
 }
 
+/**
+ * 根着法软化采样:先按分值取前 cap 个着法(K 收口,见 variety.ts),
+ * 再在「与最优着法差距 ≤ window」的着法间按 exp((v-vmax)/T) 抽样。
+ * pool 为空或仅一个着法时退化为确定性选择;T<=0 时等价于 argmax(同分取先出现者)。
+ */
+export function sampleRoot(
+  scored: ReadonlyArray<{ move: number; score: number }>,
+  temperature: number,
+  window: number,
+  rng: () => number,
+  cap = Infinity,
+): number {
+  if (!scored.length) return -1;
+  // Array.sort 自 ES2019 起稳定:同分保持原顺序(根节点候选启发式顺序)。
+  const ranked = [...scored].sort((a, b) => b.score - a.score);
+  const best = ranked[0].score;
+  const limit = cap >= 1 ? Math.max(1, Math.floor(cap)) : ranked.length;
+  const pool = ranked.slice(0, limit).filter((s) => best - s.score <= window);
+  if (pool.length <= 1) return pool.length ? pool[0].move : ranked[0].move;
+  if (!(temperature > 0)) return pool[0].move;
+  let total = 0;
+  const weights = pool.map((s) => {
+    const w = Math.exp((s.score - best) / temperature);
+    total += w;
+    return w;
+  });
+  let r = rng() * total;
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return pool[i].move;
+  }
+  return pool[pool.length - 1].move;
+}
+
 export function searchBest(
   root: Position,
   config: Config,
@@ -155,6 +195,7 @@ export function searchBest(
   let bestMove = -1;
   let bestScore = -INF;
   let completed = 0;
+  let rootScores: { move: number; score: number }[] = [];
   const nodeLimit = opts.maxNodes && opts.maxNodes > 0 ? opts.maxNodes : Infinity;
 
   const win = findWinningMove(root, config);
@@ -299,6 +340,7 @@ export function searchBest(
       if (at > 0) { ordered.splice(at, 1); ordered.unshift(bestMove); }
     }
     const mover = root.player;
+    const depthScores: { move: number; score: number }[] = [];
     for (const m of ordered) {
       if (aborted || nodes >= nodeLimit) { aborted = true; break; }
       const u = applyStep(root, m, config);
@@ -309,9 +351,11 @@ export function searchBest(
       const score = root.player === mover ? child : -child;
       undoStep(root, u);
       if (aborted) break;
+      depthScores.push({ move: m, score });
       if (score > localBest) { localBest = score; localMove = m; }
     }
     if (aborted) break;
+    rootScores = depthScores;   // 本层根着法精确分值(供变化档位采样)
     bestMove = localMove;
     bestScore = localBest;
     completed = depth;
@@ -319,6 +363,23 @@ export function searchBest(
   }
 
   if (interrupted) throw new Error("搜索已中断");
+
+  // 变化档位:仅在无必胜/必败定论(|bestScore| < MATE_LIMIT)且留有随机源时采样,
+  // 强制杀与已证明的胜负不倒手(见 variety.ts)。
+  const spec = opts.variety;
+  const rng = opts.rng;
+  if (spec && spec.level !== "off" && rng && rootScores.length > 1
+    && Math.abs(bestScore) < MATE_LIMIT) {
+    const [temperature, window, poolCap] = varietyAt(spec, root.moveCount);
+    if (temperature > 0) {
+      const pick = sampleRoot(rootScores, temperature, window, rng, poolCap);
+      if (pick >= 0 && pick !== bestMove) {
+        const entry = rootScores.find((s) => s.move === pick);
+        bestMove = pick;
+        if (entry) bestScore = entry.score;
+      }
+    }
+  }
   return { move: bestMove, score: bestScore, depth: completed, nodes, elapsed: now() - t0 };
 }
 

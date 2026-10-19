@@ -4,6 +4,14 @@ import { Engine } from "./engine";
 import { Sounds } from "./audio";
 import { BLACK, BOARD_SIZE, EMPTY, WHITE } from "./types";
 import type { AiResult, GameState } from "./types";
+import { PARAM_FIELDS, sanitizeParams, varietyFor } from "./engine/variety";
+import type { VarietyLevel, VarietyParams } from "./engine/variety";
+
+const VARIETY_LEVELS: readonly VarietyLevel[] = ["off", "low", "mid", "high", "custom"];
+
+function isVarietyLevel(v: string): v is VarietyLevel {
+  return (VARIETY_LEVELS as readonly string[]).includes(v);
+}
 
 interface Tier {
   name: string;
@@ -66,6 +74,16 @@ export class App {
   private hver: "beginner" | "mid" | "advanced" | "hell" | "legend" = "advanced";
   private hvcf = true;
   private whiteRestrict = 2;        // 白棋前 N 手禁推(0=无禁推,新局生效)
+  // AI 变化:同局面不再只给同一应手(见 engine/variety.ts)。off=每步最强。
+  private hvariety: VarietyLevel = "mid";
+  /** custom 档的可调参数(预设档位忽略)。 */
+  private hvarietyParams: VarietyParams = sanitizeParams(varietyFor("custom"));
+  private static readonly VARIETY_LABELS: Record<VarietyLevel, string> = {
+    off: "关(每步最强)", low: "低", mid: "中(推荐)", high: "高", custom: "自定义",
+  };
+  private readonly VARIETY_SHORT: Record<VarietyLevel, string> = {
+    off: "关", low: "低", mid: "中", high: "高", custom: "自定",
+  };
 
   private showDanger = false;
   private showNumbers = false;
@@ -290,6 +308,38 @@ export class App {
       hvcfRadios.appendChild(label);
     }
     this.syncVcfEnabled();
+    const hvarietyRadios = $("hvariety-radios");
+    for (const value of VARIETY_LEVELS) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "hvariety";
+      input.value = value;
+      input.checked = value === this.hvariety;
+      label.append(input, document.createTextNode(App.VARIETY_LABELS[value]));
+      hvarietyRadios.appendChild(label);
+    }
+    // 自定义参数(仅「自定义」档可见):改任一数值即自动切到自定义。
+    const paramBox = $("hvariety-params");
+    for (const field of PARAM_FIELDS) {
+      const label = document.createElement("label");
+      label.className = "seconds";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.id = `variety-${field.key}`;
+      input.min = String(field.min);
+      input.max = String(field.max);
+      input.step = String(field.step);
+      input.value = String(this.hvarietyParams[field.key] ?? "");
+      input.addEventListener("input", () => this.onVarietyParamInput());
+      label.append(document.createTextNode(field.label), input);
+      paramBox.appendChild(label);
+    }
+    const hint = document.createElement("div");
+    hint.className = "variety-hint";
+    hint.textContent = "T 越大越随机；window 是允许比最优差多少（0.9 ≈ 一个可杀四）；K 只在前 K 个着法里抽。必胜/必杀不参与随机。";
+    paramBox.appendChild(hint);
+    hvarietyRadios.addEventListener("change", () => this.onVarietyPresetChange());
     const limitRadios = $("limit-radios");
     for (const [value, text] of [["none", "不限时"], ["ai", "AI 读秒"]] as const) {
       const label = document.createElement("label");
@@ -519,7 +569,11 @@ export class App {
     try {
       const res = await this.engine.call<AiResult>(
         "ai",
-        { depth: tier.depth, budget, engine: this.hver, vcf: this.hvcf },
+        {
+          depth: tier.depth, budget, engine: this.hver, vcf: this.hvcf,
+          variety: this.hvariety,
+          ...(this.hvariety === "custom" ? { varietyParams: this.hvarietyParams } : {}),
+        },
         Math.round((budget + 300) * 1000),
       );
       if (epoch !== this.epoch) return;
@@ -1228,8 +1282,9 @@ export class App {
   }
 
   private versionText(): string {
-    if (this.hver === "beginner") return "初级";
-    return `${VERSION_LABELS[this.hver]}·${this.hvcf ? "VCF开" : "VCF关"}`;
+    const variety = this.hvariety === "off" ? "" : `·变化${this.VARIETY_SHORT[this.hvariety]}`;
+    if (this.hver === "beginner") return `初级${variety}`;
+    return `${VERSION_LABELS[this.hver]}·${this.hvcf ? "VCF开" : "VCF关"}${variety}`;
   }
 
   private syncVcfEnabled(): void {
@@ -1252,6 +1307,11 @@ export class App {
       input.checked = (input.value === "on") === this.hvcf;
     }
     this.syncVcfEnabled();
+    for (const input of document.querySelectorAll<HTMLInputElement>('input[name="hvariety"]')) {
+      input.checked = input.value === this.hvariety;
+    }
+    this.syncVarietyParams();
+    if (this.hvariety === "custom") this.writeVarietyParams();
     for (const input of document.querySelectorAll<HTMLInputElement>('input[name="limit"]')) {
       input.checked = input.value === this.limitMode;
     }
@@ -1265,6 +1325,60 @@ export class App {
     $("settings").classList.add("hidden");
   }
 
+  /** 收集自定义参数:夹紧后写回状态(输入框在「确定」时才回写,避免打断输入)。 */
+  private readVarietyParams(): void {
+    const raw: Record<string, number> = {};
+    for (const field of PARAM_FIELDS) {
+      const el = document.getElementById(`variety-${field.key}`) as HTMLInputElement | null;
+      if (el) raw[field.key] = Number(el.value);
+    }
+    this.hvarietyParams = sanitizeParams(raw);
+  }
+
+  private writeVarietyParams(): void {
+    const base = varietyFor("custom", this.hvarietyParams);
+    for (const field of PARAM_FIELDS) {
+      const el = document.getElementById(`variety-${field.key}`) as HTMLInputElement | null;
+      if (el) el.value = String(base[field.key]);
+    }
+    this.hvarietyParams = sanitizeParams(base);
+  }
+
+  /** 预设档位 → 参数框(切到「自定义」时从上一个预设继续调)。 */
+  private fillVarietyParams(level: VarietyLevel): void {
+    const spec = varietyFor(level);
+    this.hvarietyParams = sanitizeParams(spec);
+    for (const field of PARAM_FIELDS) {
+      const el = document.getElementById(`variety-${field.key}`) as HTMLInputElement | null;
+      if (el) el.value = String(spec[field.key]);
+    }
+  }
+
+  private syncVarietyParams(): void {
+    // 以「面板上当前选中的档位」为准:选自定义还没点确定时也要能立刻调参数。
+    $("hvariety-params").classList.toggle("hidden", this.selectedVarietyLevel() !== "custom");
+  }
+
+  private selectedVarietyLevel(): VarietyLevel {
+    const sel = document.querySelector<HTMLInputElement>('input[name="hvariety"]:checked');
+    return sel && isVarietyLevel(sel.value) ? sel.value : this.hvariety;
+  }
+
+  private onVarietyPresetChange(): void {
+    const sel = document.querySelector<HTMLInputElement>('input[name="hvariety"]:checked');
+    if (!sel || !isVarietyLevel(sel.value)) return;
+    if (sel.value !== "custom") this.fillVarietyParams(sel.value);
+    this.syncVarietyParams();
+  }
+
+  private onVarietyParamInput(): void {
+    this.readVarietyParams();
+    this.hvariety = "custom";
+    const custom = document.querySelector<HTMLInputElement>('input[name="hvariety"][value="custom"]');
+    if (custom) custom.checked = true;
+    this.syncVarietyParams();
+  }
+
   private applySettings() {
     const tierInput = document.querySelector<HTMLInputElement>('input[name="tier"]:checked');
     if (tierInput) this.tier = Number(tierInput.value);
@@ -1272,6 +1386,12 @@ export class App {
     const vcfInput = document.querySelector<HTMLInputElement>('input[name="hvcf"]:checked');
     if (vcfInput) this.hvcf = vcfInput.value === "on";
     if (this.hver === "beginner") this.hvcf = false;
+    const varietyInput = document.querySelector<HTMLInputElement>('input[name="hvariety"]:checked');
+    if (varietyInput && isVarietyLevel(varietyInput.value)) this.hvariety = varietyInput.value;
+    if (this.hvariety === "custom") {
+      this.readVarietyParams();
+      this.writeVarietyParams();   // 夹紧后的值回写输入框
+    }
     const limitInput = document.querySelector<HTMLInputElement>('input[name="limit"]:checked');
     if (limitInput) this.limitMode = limitInput.value === "ai" ? "ai" : "none";
     const seconds = Number(($("limit-seconds") as HTMLInputElement).value);
@@ -1287,7 +1407,7 @@ export class App {
       this.whiteRestrict = Math.max(0, Math.min(4, Math.round(restrict)));
     }
     this.closeSettings();
-    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 自动播放 ${this.playSeconds}s${restrictChanged ? ` / 白棋禁推 ${this.whiteRestrict} 手(新局生效)` : ""}`);
+    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 变化 ${App.VARIETY_LABELS[this.hvariety]} / 自动播放 ${this.playSeconds}s${restrictChanged ? ` / 白棋禁推 ${this.whiteRestrict} 手(新局生效)` : ""}`);
     this.syncPanel();
     this.maybeRunAi();
   }

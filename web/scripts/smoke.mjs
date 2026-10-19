@@ -149,7 +149,7 @@ const defaults = await page.evaluate(() => ({
 }));
 check(defaults.tier === 2 && defaults.limit === 15 && defaults.mode === "ai" &&
   defaults.infoLimit === "读 15 秒" &&
-  defaults.param === "高级·VCF开 · 深度 8 层",
+  defaults.param === "高级·VCF开·变化中 · 深度 8 层",
   "default advanced+VCF / depth 8 / 读秒 15s");
 
 const tiers = await page.evaluate(() => {
@@ -189,14 +189,75 @@ check(!(await page.$eval('input[name="hvcf"]', (el) => el.disabled)),
   "vcf enabled for mid version");
 await page.click('input[name="hver"][value="advanced"]');
 await page.click('input[name="hvcf"][value="off"]');
+// AI 变化档位:四档、默认中;切高档与版本/VCF 一起应用并写回会话
+const varietyRadios = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('input[name="hvariety"]')).map((r) => ({
+    value: r.value,
+    label: r.closest("label")?.textContent ?? "",
+    checked: r.checked,
+  })));
+check(varietyRadios.length === 5 && varietyRadios.every((r) => r.label.trim()) &&
+  varietyRadios.some((r) => r.value === "mid" && r.checked),
+  "five AI-variation levels, default 中");
+check(await page.$eval("#hvariety-params", (el) => el.classList.contains("hidden")),
+  "variety params hidden on preset levels");
+await page.click('input[name="hvariety"][value="high"]');
 await page.click("#settings-apply");
 const applied = await page.evaluate(() => ({
   ver: window.__antifive.hver,
   vcf: window.__antifive.hvcf,
+  variety: window.__antifive.hvariety,
   param: document.getElementById("info-param").textContent,
 }));
 check(applied.ver === "advanced" && applied.vcf === false &&
   applied.param.includes("VCF关"), "version/vcf applied");
+check(applied.variety === "high" && applied.param.includes("变化高"),
+  "AI variation applied to session + info line");
+
+// 自定义参数:自定义档显示 8 个参数框,改数值即切档,应用后写回会话并夹紧越界值
+await page.keyboard.press("e");
+await page.click('input[name="hvariety"][value="custom"]');
+const customPanel = await page.evaluate(() => ({
+  hidden: document.getElementById("hvariety-params").classList.contains("hidden"),
+  inputs: document.querySelectorAll("#hvariety-params input").length,
+  window: document.getElementById("variety-window").value,
+  temperature: document.getElementById("variety-temperature").value,
+}));
+check(!customPanel.hidden && customPanel.inputs === 8 &&
+  customPanel.window === "0.6" && customPanel.temperature === "0.2",
+  "custom level shows 8 params prefilled from the last preset");
+await page.$eval("#variety-window", (el) => {
+  el.value = "0.75";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+await page.$eval("#variety-poolCap", (el) => {
+  el.value = "99";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+await page.click("#settings-apply");
+const custom = await page.evaluate(() => ({
+  variety: window.__antifive.hvariety,
+  params: window.__antifive.hvarietyParams,
+  windowInput: document.getElementById("variety-window").value,
+  capInput: document.getElementById("variety-poolCap").value,
+  param: document.getElementById("info-param").textContent,
+}));
+check(custom.variety === "custom" && custom.params.window === 0.75 &&
+  custom.params.poolCap === 8 && custom.capInput === "8",
+  "custom params applied + clamped (K 99 -> 8)");
+check(custom.param.includes("变化自定"), "custom level shown in info line");
+
+// 切回预设档:参数面板隐藏,再从自定义进入时参数框回到预设值
+await page.keyboard.press("e");
+await page.click('input[name="hvariety"][value="mid"]');
+check(await page.$eval("#hvariety-params", (el) => el.classList.contains("hidden")),
+  "preset level hides the params again");
+await page.click('input[name="hvariety"][value="custom"]');
+check(await page.$eval("#variety-window", (el) => el.value === "0.3"),
+  "switching to a preset refills the custom params");
+// 复位为中档,不影响后续用例
+await page.click('input[name="hvariety"][value="mid"]');
+await page.click("#settings-apply");
 
 // 禁手设置:0=白棋无禁推,新局按设定生效;改回默认 2
 await page.keyboard.press("e");

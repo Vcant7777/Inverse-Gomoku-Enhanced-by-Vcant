@@ -11,6 +11,7 @@ import { depthForProfile, profileFor, vcfSeconds } from "./profiles.ts";
 import { findForcedKill } from "./vcf.ts";
 import { MATE } from "./eval.ts";
 import { killCaptures } from "./tactics.ts";
+import { mulberry32, randomSeed, varietyFor } from "./variety.ts";
 
 export interface StepRecord {
   idx: number;
@@ -34,11 +35,22 @@ export class EngineSession {
   lastElapsed = 0;
   resigned = 0;
   lastEngine = "advanced";
+  /** 本局随机种子:同一局内变化可复现,跨局不同(见 variety.ts)。 */
+  seed = 0;
   onProgress: ((nodes: number) => void) | null = null;
   interruptBuffer: Int32Array | null = null;
+  private rng: () => number = Math.random;
 
   constructor(opts: SessionOptions = {}) {
     this.config = { ...DEFAULT_CONFIG, ...(opts.config ?? {}) };
+    this.reseed();
+  }
+
+  /** 换一局随机种子;seed 传入 0/缺省时取系统随机数。 */
+  reseed(seed = 0): number {
+    this.seed = (seed >>> 0) || randomSeed();
+    this.rng = mulberry32(this.seed);
+    return this.seed;
   }
 
   reset(config?: Partial<Config>): void {
@@ -49,6 +61,7 @@ export class EngineSession {
     this.lastElapsed = 0;
     this.resigned = 0;
     this.lastEngine = "advanced";
+    this.reseed();   // 新局换种子:同手顺也应有不同应手
     clearTT();
   }
 
@@ -177,9 +190,11 @@ export class EngineSession {
     if (this.pos.gameOver) throw new Error("对局已结束");
   }
 
-  newGame(config?: Partial<Config>): Record<string, unknown> {
+  newGame(config?: Partial<Config>, seed?: unknown): Record<string, unknown> {
     this.reset(config);
-    return { state: this.state() };
+    // 传入 seed 可复现一局(自对弈脚本/回归测试);缺省 = 系统随机,每局不同。
+    if (seed !== undefined && seed !== null && seed !== "") this.reseed(Number(seed) >>> 0);
+    return { state: this.state(), seed: this.seed };
   }
 
   move(idx: number, allowSuicide = false): Record<string, unknown> {
@@ -224,15 +239,20 @@ export class EngineSession {
   ai(req: Req): Record<string, unknown> {
     this.ensurePlayable();
     const profile = profileFor(req.engine);
+    // 变化档位:off(缺省)时行为与旧版完全一致。
+    const variety = varietyFor(req.variety, req.varietyParams);
+    const varied = variety.level !== "off";
     if (profile.version !== this.lastEngine) {
       clearTT();
       this.lastEngine = profile.version;
     }
     if (profile.supportsBook) {
       const book = openingMove(this.pos);
-      if (book >= 0 && legalMoves(this.pos, this.config).includes(book)) {
+      // bookChance<1:按概率跳过开局库,让首手/白应手也能变化。
+      const useBook = !varied || variety.bookChance >= 1 || this.rng() < variety.bookChance;
+      if (book >= 0 && useBook && legalMoves(this.pos, this.config).includes(book)) {
         this.pushStep(applyStep(this.pos, book, this.config));
-        return { state: this.state(), move: book, nodes: 0, elapsed: 0 };
+        return { state: this.state(), move: book, nodes: 0, elapsed: 0, variety: variety.level };
       }
     }
     const depth = Math.max(1, Math.floor(Number(req.depth ?? 4)));
@@ -253,8 +273,9 @@ export class EngineSession {
       if (vcfMove >= 0) {
         this.pushStep(applyStep(this.pos, vcfMove, this.config));
         this.lastElapsed = (Date.now() - t0) / 1000;
+        // 强制杀不参与随机:能赢的局永远赢下来。
         return { state: this.state(), move: vcfMove,
-          nodes: this.lastNodes, elapsed: this.lastElapsed };
+          nodes: this.lastNodes, elapsed: this.lastElapsed, variety: variety.level };
       }
     }
 
@@ -268,21 +289,25 @@ export class EngineSession {
       onProgress: this.progress,
       interruptBuffer: this.interruptBuffer,
       maxNodes: req.nodeLimit ? Number(req.nodeLimit) : undefined,
+      variety,
+      rng: varied ? this.rng : undefined,
     });
     this.lastNodes = result.nodes;
     this.lastElapsed = (Date.now() - t0) / 1000;
     if (result.move < 0) {
       this.finishStuck();
-      return { state: this.state(), move: null, nodes: this.lastNodes, elapsed: this.lastElapsed };
+      return { state: this.state(), move: null, nodes: this.lastNodes,
+        elapsed: this.lastElapsed, variety: variety.level };
     }
     this.pushStep(applyStep(this.pos, result.move, this.config));
     return {
       state: this.state(), move: result.move,
-      nodes: this.lastNodes, elapsed: this.lastElapsed,
+      nodes: this.lastNodes, elapsed: this.lastElapsed, variety: variety.level,
     };
   }
 
   hint(req: Req): Record<string, unknown> {
+    // 提示/分析不接变化档位:分析结论必须可复现(与 Python 一致,随机只在对局侧)。
     this.ensurePlayable();
     const profile = profileFor(req.engine);
     if (profile.version !== this.lastEngine) {
@@ -358,7 +383,7 @@ export class EngineSession {
   handle(req: Req): Record<string, unknown> {
     const cmd = String(req.cmd ?? "");
     switch (cmd) {
-      case "new": return this.newGame(req.config as Partial<Config> | undefined);
+      case "new": return this.newGame(req.config as Partial<Config> | undefined, req.seed);
       case "state": return { state: this.state() };
       case "move": return this.move(Number(req.idx), Boolean(req.allow_suicide));
       case "undo": return this.undo();

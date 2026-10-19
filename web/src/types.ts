@@ -43,6 +43,8 @@ export interface AiResult {
   move: number | null;
   nodes: number;
   elapsed: number;
+  /** 实际生效的变化档位(off/low/mid/high),便于诊断。 */
+  variety?: string;
 }
 
 export interface HintResult {
