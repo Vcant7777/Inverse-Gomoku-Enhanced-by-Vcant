@@ -147,4 +147,5 @@ npm run smoke   # 浏览器冒烟测试（需 Chrome/Edge）
 npm run bench   # 浏览器搜索基准
 node scripts/variety-probe.mjs        # AI 变化档位:同一手顺的应手分布
 node scripts/variety-probe.mjs --ab   # AI 变化档位:棋力 A/B(可多进程分区,见脚本头注释)
+OLD_ENGINE_ROOT=<旧引擎检出目录> node scripts/selfplay-ab.mjs  # 两个检出之间的棋力 A/B(见脚本头注释)
 ```
