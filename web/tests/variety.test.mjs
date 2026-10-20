@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPosition, computeHash, DEFAULT_CONFIG } from "../src/engine/rules.ts";
+import { applyStep, createPosition, computeHash, DEFAULT_CONFIG } from "../src/engine/rules.ts";
 import { EngineSession } from "../src/engine/api.ts";
-import { searchBest, sampleRoot } from "../src/engine/search.ts";
+import { clearTT, searchBest, sampleRoot } from "../src/engine/search.ts";
 import { mulberry32, varietyFor, varietyAt, normalizeVariety, randomSeed, sanitizeParams } from "../src/engine/variety.ts";
 
 // 固定前缀:黑 112(天元)、白 52、黑 172、白 34 —— 空盘附近的中腹手顺。
@@ -83,7 +83,7 @@ test("mid 档位：同一手顺多次应手不再固定", () => {
   const moves = [];
   let legal = null;
   for (let k = 0; k < 10; k++) {
-    const r = playAi(PREFIX, "mid");
+    const r = playAi(PREFIX, "mid", 1000 + k * 37);
     moves.push(r.move);
     legal = r.legalBefore;
   }
@@ -93,7 +93,7 @@ test("mid 档位：同一手顺多次应手不再固定", () => {
 
 test("变化档位：白方首应手(开局库)也会变化", () => {
   const first = [];
-  for (let k = 0; k < 12; k++) first.push(playAi([112], "high").move);
+  for (let k = 0; k < 12; k++) first.push(playAi([112], "high", 2000 + k * 53).move);
   assert.ok(new Set(first).size >= 2, `白方首应手应出现不同,实际 ${first.join(",")}`);
 });
 
@@ -184,4 +184,40 @@ test("自定义档位：T=0/K=1 退化为确定性，T 拉大则出现多解", (
     }).move);
   }
   assert.ok(moves.size > 1, `期望自定义高档位出现多解，实际只有 ${[...moves]}`);
+});
+
+test("变化档位：抽样只落在窗口内，池子只有一个时必选它", () => {
+  // 用同一局面的根着法分值表当判据：每次搜索都清空置换表，只让种子不同，
+  // 这样任何偏差都只能来自采样，而不是搜索本身。
+  const pos = createPosition();
+  for (const m of PREFIX) applyStep(pos, m, DEFAULT_CONFIG);
+  for (const level of ["low", "mid", "high"]) {
+    const spec = varietyFor(level);
+    const [, window, cap] = varietyAt(spec, pos.moveCount);
+    for (let k = 0; k < 8; k++) {
+      clearTT();
+      const r = searchBest(pos, DEFAULT_CONFIG, {
+        maxDepth: 4, timeMs: 0, engine: "advanced", maxNodes: 60000,
+        variety: spec, rng: mulberry32(500 + k),
+      });
+      const own = [...r.rootScored].sort((a, b) => b.score - a.score);
+      const best = own[0].score;
+      const pool = own.slice(0, cap).filter((s) => best - s.score <= window);
+      const pick = own.find((s) => s.move === r.move);
+      assert.ok(pick, `${level} 选中的手 ${r.move} 必须在根着法表里`);
+      assert.ok(pool.some((s) => s.move === r.move), `${level} 选中的手 ${r.move} 必须在窗口内`);
+      assert.ok(best - pick.score <= window + 1e-9,
+        `${level} 偏差 ${(best - pick.score).toFixed(3)} 超过窗口 ${window}`);
+      if (pool.length === 1) assert.equal(r.move, pool[0].move, "池子只有一个时必须选它");
+    }
+  }
+});
+
+test("变化档位：杀棋局面根着法表为空（根本不进入抽样）", () => {
+  const r = searchBest(killBoard(), DEFAULT_CONFIG, {
+    maxDepth: 3, timeMs: 0, engine: "advanced", variety: varietyFor("high"), rng: mulberry32(7),
+  });
+  assert.equal(r.move, 4 * 15 + 4);
+  assert.equal(r.rootScored.length, 0);
+  assert.ok(Math.abs(r.score) >= 1_000_000 - 450, `应为杀棋分，实际 ${r.score}`);
 });

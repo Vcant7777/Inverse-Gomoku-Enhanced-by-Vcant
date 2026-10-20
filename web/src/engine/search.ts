@@ -35,6 +35,8 @@ export interface SearchResult {
   depth: number;
   nodes: number;
   elapsed: number;
+  /** 最后一层完成的根着法精确分值(仅根节点完整走完时非空,供变化档位与探针/测试用)。 */
+  rootScored: { move: number; score: number }[];
 }
 
 interface TTEntry {
@@ -200,12 +202,12 @@ export function searchBest(
 
   const win = findWinningMove(root, config);
   if (win >= 0) {
-    return { move: win, score: MATE, depth: 1, nodes: 0, elapsed: now() - t0 };
+    return { move: win, score: MATE, depth: 1, nodes: 0, elapsed: now() - t0, rootScored: [] };
   }
   const rootMoves = legalMoves(root, config);
   if (!rootMoves.length) {
     return { move: -1, score: root.gameOver ? terminalScore(root, 0) : -MATE,
-      depth: 0, nodes: 0, elapsed: now() - t0 };
+      depth: 0, nodes: 0, elapsed: now() - t0, rootScored: [] };
   }
   bestMove = rootMoves[0];
 
@@ -380,7 +382,7 @@ export function searchBest(
       }
     }
   }
-  return { move: bestMove, score: bestScore, depth: completed, nodes, elapsed: now() - t0 };
+  return { move: bestMove, score: bestScore, depth: completed, nodes, elapsed: now() - t0, rootScored: rootScores };
 }
 
 export function clearTT(): void {
