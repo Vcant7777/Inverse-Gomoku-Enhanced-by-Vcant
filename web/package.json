@@ -1,7 +1,7 @@
 {
   "name": "antifive-web",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "type": "module",
   "scripts": {
     "prepare:assets": "node scripts/prepare-assets.mjs",

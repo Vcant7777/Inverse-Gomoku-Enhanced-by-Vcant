@@ -353,6 +353,22 @@ check(pausedView.aiState === "AI已暂停" && pausedView.btn === "继续" &&
 check(pausedView.clock.startsWith("0:15"),
   `countdown reset to limit on pause (${pausedView.clock})`);
 check(pausedView.notify.includes("暂停"), "pause warning shown in message area");
+// 暂停期间改时长:读秒与提示语都要跟着设定走(提示语不是暂停那一刻写死的快照)
+await page.keyboard.press("e");
+await page.click('input[name="limit"][value="ai"]');
+await page.$eval("#limit-seconds", (el) => { el.value = "30"; });
+await page.click("#settings-apply");
+await wait(() => document.getElementById("settings").classList.contains("hidden"), 10000);
+// 读秒每 100ms 才刷新一次,等它跟上设定再断言
+await wait(() => document.getElementById("clock").textContent.startsWith("0:30"), 8000);
+const retimed = await page.evaluate(() => ({
+  clock: document.getElementById("clock").textContent,
+  notify: document.getElementById("notify").textContent,
+  paused: window.__antifive.paused,
+}));
+check(retimed.paused === true && retimed.clock.startsWith("0:30") &&
+  retimed.notify.includes("30 秒"),
+  `pause notice follows new limit setting (${retimed.clock} / ${retimed.notify})`);
 await page.evaluate((n) => { window.__pausedMoves = n; }, pausedView.moves);
 await new Promise((r) => setTimeout(r, 1500));
 const stillPaused = await page.evaluate(() => ({
@@ -369,8 +385,8 @@ const resumed = await page.evaluate(() => ({
   btn: document.getElementById("ai-pause").textContent,
 }));
 check(resumed.paused === false && resumed.btn === "暂停" &&
-  resumed.remain > 13 && resumed.remain <= 15.5,
-  `resume restarts full countdown (${resumed.remain.toFixed(1)}s)`);
+  resumed.remain > 28 && resumed.remain <= 30.5,
+  `resume restarts full countdown with new limit (${resumed.remain.toFixed(1)}s)`);
 await wait(() => window.__antifive.state.move_count > window.__pausedMoves, 120000);
 check(true, "ai resumes and plays after unpause");
 

@@ -114,6 +114,9 @@ export class App {
   private humanPrevState: GameState | null = null;
   private paused = false;        // 玩家点了「暂停AI」:停手停钟,不再自动落子
   private pauseAbort = false;    // 暂停引发的中断还没收尾(用于吞掉「搜索已中断」)
+  // 暂停时提示语取自哪一档(思考中被中断 / 浏览器不支持中断 / 本来就没在思考),
+  // 记下来是为了暂停期间改设定时能用新时长重新生成同一句提示。
+  private pausedMode: "thinking" | "soft" | "idle" = "idle";
 
   private review = false;
   private recordMoves: number[] = [];
@@ -588,6 +591,11 @@ export class App {
         Math.round((budget + 300) * 1000),
       );
       if (epoch !== this.epoch) return;
+      // 暂停之后才到达的结果(中断窗口极小 / 浏览器不支持中断):直接丢弃,不算落子
+      if (this.paused) {
+        this.logDiag("ai result discarded while paused", { move: res.move, nodes: res.nodes });
+        return;
+      }
       // 切屏/锁屏期间 Worker 被系统挂起(搜索心跳中断):时间预算被空烧,
       // 结果只是浅层搜索,悔掉后在前台用完整预算重搜一次
       if (retry === 0 && this.suspendedDuringThink) {
@@ -657,25 +665,34 @@ export class App {
     this.paused = true;
     const wasThinking = this.thinking;
     const interrupting = wasThinking && this.engine.canInterrupt;
+    this.pausedMode = !wasThinking ? "idle" : interrupting ? "thinking" : "soft";
     if (interrupting) {
       this.pauseAbort = true;
       this.engine.interrupt();   // Worker 在下一个检查点(每 1024 节点)退出
     }
     this.deadline = null;
     this.syncPanel();
-    if (wasThinking && !interrupting) {
-      // 没有跨源隔离时中断不可用:这一轮会先走完,再停手
-      this.setStatus(`已暂停：当前浏览器不支持中断，本轮思考会先走完再停手（${this.clockLimitText()}）`, 8000);
-    } else if (wasThinking) {
-      this.setStatus(`已暂停：本轮思考作废，继续后 AI 重新计时并重算（${this.clockLimitText()}）`, 12000);
-    } else {
-      this.setStatus(`已暂停 AI，继续后重新计时（${this.clockLimitText()}）`, 12000);
+    this.setStatus(this.pausedNoticeText(), this.pausedMode === "soft" ? 8000 : 12000);
+  }
+
+  /** 暂停提示语:时长直接取当前设定,不在暂停那一刻写死。 */
+  private pausedNoticeText(): string {
+    const limit = this.clockLimitText();
+    switch (this.pausedMode) {
+      case "thinking":
+        return `已暂停：本轮思考作废，继续后 AI 重新计时并重算（${limit}）`;
+      case "soft":
+        // 没有跨源隔离时中断不可用:这一轮会跑完,但结果照样丢弃不落子
+        return `已暂停：当前浏览器不支持中断，这一轮会跑完但不落子，继续后重新计时（${limit}）`;
+      default:
+        return `已暂停 AI，继续后重新计时（${limit}）`;
     }
   }
 
   private resumeAi() {
     if (!this.paused) return;
     this.paused = false;
+    this.pausedMode = "idle";
     this.syncPanel();
     this.setStatus(`继续思考：重新计时（${this.clockLimitText()}）`, 4000);
     // 上一轮中断若还没收尾,thinking 仍为 true,由 runAi 收尾后接着启动
@@ -1493,7 +1510,13 @@ export class App {
       this.whiteRestrict = Math.max(0, Math.min(4, Math.round(restrict)));
     }
     this.closeSettings();
-    this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 变化 ${App.VARIETY_LABELS[this.hvariety]} / 自动播放 ${this.playSeconds}s${restrictChanged ? ` / 白棋禁推 ${this.whiteRestrict} 手(新局生效)` : ""}`);
+    if (this.paused) {
+      // 暂停期间改设定:读秒已按新值冻结,提示语里的「（X 秒）」跟着重算;
+      // 应用了哪些设定由面板的「参数/限时」行和读秒本身体现,这里优先提示「仍处于暂停」。
+      this.setStatus(this.pausedNoticeText(), 12000);
+    } else {
+      this.setStatus(`设定已应用: ${this.versionText()} / ${TIERS[this.tier].name} / ${this.limitMode === "ai" ? `读秒 ${this.limitSeconds}s` : "不限时"} / 变化 ${App.VARIETY_LABELS[this.hvariety]} / 自动播放 ${this.playSeconds}s${restrictChanged ? ` / 白棋禁推 ${this.whiteRestrict} 手(新局生效)` : ""}`);
+    }
     this.syncPanel();
     this.maybeRunAi();
   }
