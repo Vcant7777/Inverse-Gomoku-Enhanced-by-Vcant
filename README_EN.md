@@ -98,6 +98,11 @@ Play in the browser, no installation:
   gets its own seed (reproducible via `moves + seed`). `custom` exposes every knob
   (T / value window / pool K / opening plies / book chance) and the engine clamps
   out-of-range values.
+- A **pause/resume** button sits next to the AI clock (works in any live game and in
+  AI-vs-AI spectating): pausing aborts the current think, freezes the countdown and
+  stops further moves; resuming restarts the full configured countdown and re-thinks
+  the turn (a notice is shown in the message strip). Without cross-origin isolation
+  there is no interrupt, so the pause degrades to "let this turn finish, then hold".
 - Feature parity with the pygame GUI: place/capture/relocate, danger hints, move
   numbers, relocation arrows, helper rays, two-click move confirmation (on by
   default), human resignation (two-click confirm), sounds, clocks, replay

@@ -210,6 +210,46 @@ button.active {
   color: #ffbe78;
 }
 
+.indicator.paused {
+  background: #ffbe78;
+}
+
+.indicator.paused + #ai-state {
+  color: #ffbe78;
+}
+
+/* 暂停 AI:与「AI 读秒」同排,右对齐;只在实时对局里出现 */
+#ai-pause {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--wood-mid);
+  background: #6b4f34;
+  color: #f0d6b2;
+  cursor: pointer;
+}
+
+#ai-pause:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+}
+
+#ai-pause[hidden] {
+  display: none;
+}
+
+#ai-pause:hover {
+  background: #7d5c3c;
+}
+
+#ai-pause.paused {
+  background: #ffbe78;
+  border-color: #d99a4e;
+  color: #3b2412;
+}
+
 .clock-row {
   display: flex;
   align-items: baseline;

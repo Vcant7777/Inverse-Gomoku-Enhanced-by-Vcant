@@ -325,6 +325,55 @@ await page.keyboard.press("4");
 await wait(() => window.__antifive.mode === 3 && window.__antifive.state.move_count >= 4, 180000);
 check(true, "ai vs ai");
 
+// 观战暂停(A 方案):中断本轮思考 → 停手停钟 → 继续后按设定时长重新计时重算
+await page.evaluate(() => {
+  const app = window.__antifive;
+  app.limitMode = "ai";
+  app.limitSeconds = 15;
+  app.paused = false;
+  app.syncPanel();
+});
+await wait(() => window.__antifive.mode === 3 && window.__antifive.thinking, 120000);
+const pausedClick = await page.evaluate(() => {
+  window.__antifive.togglePauseAi();
+  return { paused: window.__antifive.paused };
+});
+check(pausedClick.paused === true, "pause ai sets flag");
+await wait(() => !window.__antifive.thinking, 30000);
+const pausedView = await page.evaluate(() => ({
+  clock: document.getElementById("clock").textContent,
+  aiState: document.getElementById("ai-state").textContent,
+  notify: document.getElementById("notify").textContent,
+  btn: document.getElementById("ai-pause").textContent,
+  moves: window.__antifive.state.move_count,
+  thinking: window.__antifive.thinking,
+}));
+check(pausedView.aiState === "AI已暂停" && pausedView.btn === "继续" &&
+  pausedView.thinking === false, "pause ui state");
+check(pausedView.clock.startsWith("0:15"),
+  `countdown reset to limit on pause (${pausedView.clock})`);
+check(pausedView.notify.includes("暂停"), "pause warning shown in message area");
+await page.evaluate((n) => { window.__pausedMoves = n; }, pausedView.moves);
+await new Promise((r) => setTimeout(r, 1500));
+const stillPaused = await page.evaluate(() => ({
+  moves: window.__antifive.state.move_count,
+  thinking: window.__antifive.thinking,
+}));
+check(stillPaused.moves === pausedView.moves && stillPaused.thinking === false,
+  "no ai move while paused");
+await page.evaluate(() => window.__antifive.togglePauseAi());
+await wait(() => window.__antifive.thinking, 30000);
+const resumed = await page.evaluate(() => ({
+  paused: window.__antifive.paused,
+  remain: (window.__antifive.deadline - performance.now()) / 1000,
+  btn: document.getElementById("ai-pause").textContent,
+}));
+check(resumed.paused === false && resumed.btn === "暂停" &&
+  resumed.remain > 13 && resumed.remain <= 15.5,
+  `resume restarts full countdown (${resumed.remain.toFixed(1)}s)`);
+await wait(() => window.__antifive.state.move_count > window.__pausedMoves, 120000);
+check(true, "ai resumes and plays after unpause");
+
 await page.evaluate((text) => window.__antifive.importRecord(new File([text], "sample.afg")), fs.readFileSync(samplePath, "utf8"));
 await wait(() => window.__antifive.review && window.__antifive.variation.length > 0);
 const imported = await page.evaluate(() => ({

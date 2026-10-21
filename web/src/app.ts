@@ -52,6 +52,11 @@ function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Worker 侧被中断时抛「搜索已中断」(api.ts 在抛出前不会改动局面)。 */
+function isInterruptError(error: unknown): boolean {
+  return errText(error).includes("中断");
+}
+
 export class App {
   private engine: Engine;
   private sounds = new Sounds();
@@ -107,6 +112,8 @@ export class App {
   private dprCheckedAt = 0;
   private undoBusy = false;
   private humanPrevState: GameState | null = null;
+  private paused = false;        // 玩家点了「暂停AI」:停手停钟,不再自动落子
+  private pauseAbort = false;    // 暂停引发的中断还没收尾(用于吞掉「搜索已中断」)
 
   private review = false;
   private recordMoves: number[] = [];
@@ -377,6 +384,8 @@ export class App {
       if (idx !== null) void this.onBoardClick(idx);
     });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    // 元素缺失时不要让整个事件绑定崩掉(旧 HTML + 新 JS 的缓存错配场景)
+    document.getElementById("ai-pause")?.addEventListener("click", () => this.togglePauseAi());
     document.addEventListener(
       "pointerdown",
       (event) => {
@@ -502,6 +511,8 @@ export class App {
     this.epoch++;
     this.thinking = false;
     this.deadline = null;
+    this.paused = false;
+    this.pauseAbort = false;
     this.nodes = 0;
     this.humanPrevState = null;
     this.review = false;
@@ -544,7 +555,7 @@ export class App {
   }
 
   private maybeRunAi() {
-    if (!this.ready || this.review || !this.state || this.state.game_over) return;
+    if (!this.ready || this.review || this.paused || !this.state || this.state.game_over) return;
     if (!this.isAiTurn() || this.thinking || this.undoBusy) return;
     if (document.hidden) return;   // 切屏时先不启动,回到前台再思考(避免预算被挂起空烧)
     void this.runAi();
@@ -601,8 +612,13 @@ export class App {
         });
       }
     } catch (error) {
-      if (epoch === this.epoch) this.setStatus(`AI 出错: ${errText(error)}`);
+      if (this.pauseAbort && isInterruptError(error)) {
+        // 暂停主动中断:不算错误;api.ts 在抛出前没改局面,继续后整轮重算
+      } else if (epoch === this.epoch) {
+        this.setStatus(`AI 出错: ${errText(error)}`);
+      }
     } finally {
+      this.pauseAbort = false;
       if (epoch === this.epoch) {
         this.thinking = false;
         this.deadline = null;
@@ -624,6 +640,64 @@ export class App {
     } else {
       this.maybeRunAi();
     }
+  }
+
+  // ---- 暂停 AI(A 方案:作废本轮思考,继续后重新计时) ----
+  // AI 跑在同步 Worker 里,主线程没法「冻结」它,只能让它中断退出。
+  // 所以暂停 = 停手 + 停钟(读秒回到设定值);继续 = 按设定时长重新计时并整轮重算。
+
+  private togglePauseAi() {
+    if (!this.ready || this.review || !this.state || this.state.game_over) return;
+    if (this.paused) this.resumeAi();
+    else this.pauseAi();
+  }
+
+  private pauseAi() {
+    if (this.paused) return;
+    this.paused = true;
+    const wasThinking = this.thinking;
+    const interrupting = wasThinking && this.engine.canInterrupt;
+    if (interrupting) {
+      this.pauseAbort = true;
+      this.engine.interrupt();   // Worker 在下一个检查点(每 1024 节点)退出
+    }
+    this.deadline = null;
+    this.syncPanel();
+    if (wasThinking && !interrupting) {
+      // 没有跨源隔离时中断不可用:这一轮会先走完,再停手
+      this.setStatus(`已暂停：当前浏览器不支持中断，本轮思考会先走完再停手（${this.clockLimitText()}）`, 8000);
+    } else if (wasThinking) {
+      this.setStatus(`已暂停：本轮思考作废，继续后 AI 重新计时并重算（${this.clockLimitText()}）`, 12000);
+    } else {
+      this.setStatus(`已暂停 AI，继续后重新计时（${this.clockLimitText()}）`, 12000);
+    }
+  }
+
+  private resumeAi() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.syncPanel();
+    this.setStatus(`继续思考：重新计时（${this.clockLimitText()}）`, 4000);
+    // 上一轮中断若还没收尾,thinking 仍为 true,由 runAi 收尾后接着启动
+    this.maybeRunAi();
+  }
+
+  private clockLimitText(): string {
+    return this.limitMode === "ai" ? `${this.limitSeconds} 秒` : "不限时";
+  }
+
+  private syncPauseButton() {
+    const btn = document.getElementById("ai-pause") as HTMLButtonElement | null;
+    if (!btn) return;
+    const live = this.ready && !!this.state && !this.state.game_over && !this.review;
+    btn.hidden = !live;
+    btn.disabled = !live;
+    btn.textContent = this.paused ? "继续" : "暂停";
+    btn.classList.toggle("paused", this.paused);
+    btn.setAttribute("aria-pressed", this.paused ? "true" : "false");
+    btn.title = this.paused
+      ? "继续 AI 思考（读秒重新计时）"
+      : "暂停 AI 思考与读秒（本轮思考作废，继续后重新计时）";
   }
 
   private applyMove(prev: GameState, next: GameState, moveIdx: number | null) {
@@ -819,6 +893,8 @@ export class App {
   private enterReview(overlay: boolean) {
     if (!this.state) return;
     this.review = true;
+    this.paused = false;
+    this.pauseAbort = false;
     this.stopAutoPlay();
     this.recordMoves = [...this.state.moves];
     this.variation = [...this.state.moves];
@@ -996,6 +1072,9 @@ export class App {
       const res = await this.engine.call<{ state: GameState; result: string }>("import", { text });
       this.epoch++;
       this.thinking = false;
+      this.deadline = null;
+      this.paused = false;
+      this.pauseAbort = false;
       this.humanPrevState = null;
       this.state = res.state;
       this.review = true;
@@ -1087,6 +1166,7 @@ export class App {
       playBtn.textContent = this.playing ? "暂停" : "自动播放";
       playBtn.classList.toggle("active", this.playing);
     }
+    this.syncPauseButton();
     const st = this.state;
     const tier = TIERS[this.tier];
     const vtxt = this.versionText();
@@ -1151,7 +1231,12 @@ export class App {
     const indicator = $("ai-indicator");
     const aiState = $("ai-state");
     const compute = $("ai-compute");
-    if (this.limitMode !== "ai") {
+    const paused = this.paused && !this.review && !st.game_over;
+    if (paused) {
+      // 暂停:读秒重置回设定时长(本轮搜索已作废,继续后按完整预算重算)
+      clock.textContent = this.limitMode === "ai" ? fmtClock(this.limitSeconds) : "不限时";
+      clock.classList.remove("warn");
+    } else if (this.limitMode !== "ai") {
       clock.textContent = "不限时";
       clock.classList.remove("warn");
     } else if (this.review || st.game_over) {
@@ -1167,9 +1252,10 @@ export class App {
       clock.textContent = fmtClock(this.limitSeconds);
       clock.classList.remove("warn");
     }
-    indicator.classList.toggle("thinking", this.thinking);
-    aiState.textContent = this.thinking ? "AI思考中" : "AI空闲";
-    compute.textContent = this.thinking ? `节点 ${this.nodes}` : "";
+    indicator.classList.toggle("thinking", this.thinking && !paused);
+    indicator.classList.toggle("paused", paused);
+    aiState.textContent = paused ? "AI已暂停" : this.thinking ? "AI思考中" : "AI空闲";
+    compute.textContent = this.thinking && !paused ? `节点 ${this.nodes}` : "";
     const notify = $("notify");
     if (this.statusText && performance.now() >= this.statusUntil && notify.textContent !== "暂无提示") {
       notify.textContent = "暂无提示";
