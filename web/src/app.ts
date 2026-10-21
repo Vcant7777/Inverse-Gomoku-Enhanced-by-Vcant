@@ -1,4 +1,4 @@
-import { BoardCanvas } from "./board";
+import { ARROW_FLY_MS, BoardCanvas } from "./board";
 import type { ArrowView, BoardView } from "./board";
 import { Engine } from "./engine";
 import { Sounds } from "./audio";
@@ -571,9 +571,24 @@ export class App {
     const budget = this.limitMode === "ai" ? this.limitSeconds : 0;
     const prev = this.state;
     if (!prev) return;
+    // 先占位:下面要等推子飞完,这段时间不能再进第二个 runAi(否则同一手会被算两次)。
     this.thinking = true;
+    // 上一手的推子还在飞:先让它飞完再开始本轮思考。否则下面的 arrow=null 会把飞行
+    // 截在半空(机机观战 350ms 一手,而飞行 500ms,必现),而且清箭头不重绘会让画布
+    // 停在中途那一帧,直到下一手落下才跳到正确位置。
+    const flyWait = this.arrowRemainingMs();
+    if (flyWait > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, flyWait + 16));
+      if (epoch !== this.epoch || this.paused) {
+        this.thinking = false;
+        this.deadline = null;
+        this.syncPanel();
+        return;
+      }
+    }
     // 对方一开始思考就撤掉上一手留下的移子箭头，避免整段思考期间残留。
     this.arrow = null;
+    this.needsDraw = true;   // 清箭头必须重绘,否则画布停在飞行中的那一帧
     this.nodes = 0;
     this.hiddenDuringThink = 0;
     this.suspendedDuringThink = false;
@@ -737,6 +752,13 @@ export class App {
     } else {
       this.afterStateChange();
     }
+  }
+
+  /** 当前推子动画还剩多少毫秒(没开箭头/没在飞时为 0)。 */
+  private arrowRemainingMs(now = performance.now()): number {
+    if (!this.showArrows || !this.arrow || this.arrow.t0 === null) return 0;
+    const remain = ARROW_FLY_MS - (now - this.arrow.t0);
+    return remain > 0 ? remain : 0;
   }
 
   private confirmGate(idx: number): boolean {
@@ -1287,7 +1309,7 @@ export class App {
       if (this.board.checkDpr()) this.needsDraw = true;
     }
     if (this.arrow && this.arrow.t0 !== null) {
-      if (now - this.arrow.t0 < 500) this.needsDraw = true;
+      if (now - this.arrow.t0 < ARROW_FLY_MS) this.needsDraw = true;
       else {
         this.arrow = { ...this.arrow, t0: null };
         this.needsDraw = true;

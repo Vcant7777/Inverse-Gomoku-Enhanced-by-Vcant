@@ -21,7 +21,8 @@ const COLOR_TARGET = "#3cc85a";
 const COLOR_LAST = "#eb4632";
 const COLOR_ARROW = "#2d6ee6";
 const COLOR_RAY = "rgba(140, 110, 230, 0.8)";
-const ARROW_FLY_MS = 500;
+/** 推子(吃子)飞行动画时长;app.ts 落子节流也按它算,避免新着法把飞行截断在半空。 */
+export const ARROW_FLY_MS = 500;
 
 export interface ArrowView {
   from: number;
