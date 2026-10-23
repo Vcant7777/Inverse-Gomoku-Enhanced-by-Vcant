@@ -1,7 +1,10 @@
 # 逆五子棋 Antifive —— AI 对战 GUI
 
-[English](README_EN.md)
 
-![逆五子棋 GUI 截图](docs/new-screenshot.png)
+
+
+![修改后效果](docs/enhanced-preview.png)
+![修改后效果](docs/new-screenshot.png)
+![修改后效果](docs/texture-green-guides-preview.png)
 
 
