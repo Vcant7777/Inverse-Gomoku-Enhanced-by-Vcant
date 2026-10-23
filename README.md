@@ -2,6 +2,6 @@
 
 [English](README_EN.md)
 
-![逆五子棋 GUI 截图]()
+![逆五子棋 GUI 截图](docs/new-screenshot.png)
 
 
