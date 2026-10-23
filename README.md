@@ -1,4 +1,6 @@
-# 逆五子棋 Antifive —— AI 对战 GUI
+# 逆五子棋 enhance ui修改与功能增加
+#增加了ui缩放适应
+#各种注释工具
 
 
 
